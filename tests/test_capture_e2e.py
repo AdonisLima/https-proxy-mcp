@@ -18,15 +18,14 @@ import shutil
 import socket
 import subprocess
 import sys
-import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
+from fixture_server import GET_RESPONSE, POST_RESPONSE
 from https_proxy_mcp.capture import Exchange
 from https_proxy_mcp.serialize import redact_headers
 from mitmdump_loader import SESSION_DIR_ENV
@@ -39,52 +38,10 @@ pytestmark = [
 LOADER = Path(__file__).parent / "mitmdump_loader.py"
 TOKEN = "Bearer e2e-secret-token"
 POST_BODY = b'{"username":"ada","password":"lovelace"}'
-GET_RESPONSE = b'{"id":1,"name":"fixture"}'
-POST_RESPONSE = b'{"created":true}'
 
 #: mitmproxy has a CA to generate on first run, so startup is not instant.
 PROXY_START_TIMEOUT_S = 30.0
 CAPTURE_TIMEOUT_S = 20.0
-
-
-# --- the fixture server -------------------------------------------------------
-
-
-class _FixtureHandler(BaseHTTPRequestHandler):
-    """Answers the two requests the test makes, and stays quiet in pytest output."""
-
-    protocol_version = "HTTP/1.1"
-
-    # The do_VERB names are dispatched on by BaseHTTPRequestHandler and cannot be renamed.
-
-    def do_GET(self) -> None:
-        self._respond(200, GET_RESPONSE)
-
-    def do_POST(self) -> None:
-        self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        self._respond(201, POST_RESPONSE)
-
-    def _respond(self, status: int, body: bytes) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, fmt: str, *args: object) -> None:
-        pass
-
-
-@pytest.fixture(scope="module")
-def fixture_server() -> Iterator[int]:
-    """A local HTTP server on an ephemeral port. Returns the port."""
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _FixtureHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    try:
-        yield server.server_address[1]
-    finally:
-        server.shutdown()
-        server.server_close()
 
 
 # --- the proxy ----------------------------------------------------------------

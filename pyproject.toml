@@ -30,7 +30,13 @@ dev = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
-    "integration: spawns real processes (mitmdump, curl). Deselect with -m 'not integration'.",
+    "integration: binds real sockets or spawns real processes. Deselect with -m 'not integration'.",
+]
+# mitmproxy calls deprecated pyparsing and pyasn1 APIs, and there is nothing to fix on this
+# side of the dependency. Narrowed to deprecations so every other warning category — ours
+# included — still reaches the report.
+filterwarnings = [
+    "ignore:.*deprecated.*:DeprecationWarning",
 ]
 
 [tool.ruff]
