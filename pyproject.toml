@@ -31,6 +31,10 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "integration: binds real sockets or spawns real processes. Deselect with -m 'not integration'.",
+    # Gated by HTTPS_PROXY_MCP_E2E=1 rather than by this marker, because a command-line -m
+    # replaces any default expression from addopts — so `-m 'not integration'` would have
+    # silently opted back in to redirecting the machine's networking.
+    "machine: changes the developer's real system proxy. Requires HTTPS_PROXY_MCP_E2E=1.",
 ]
 # mitmproxy calls deprecated pyparsing and pyasn1 APIs, and there is nothing to fix on this
 # side of the dependency. Narrowed to deprecations so every other warning category — ours
