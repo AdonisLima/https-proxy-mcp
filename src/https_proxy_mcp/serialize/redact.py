@@ -18,6 +18,7 @@ import json
 import re
 from collections.abc import Iterable
 from typing import Any
+from urllib.parse import unquote_plus
 
 #: Header names whose values are secrets. Compared case-insensitively (SPEC.md).
 REDACTED_HEADERS = frozenset(
@@ -43,6 +44,14 @@ SECRET_KEY_PATTERN = re.compile(
 #: legitimate payloads, and "JWT-shaped" means dotted segments.
 JWT_PATTERN = re.compile(r"eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?:\.[A-Za-z0-9_-]+)?")
 
+FORM_MEDIA_TYPE = "application/x-www-form-urlencoded"
+
+#: A body that is unambiguously form-encoded: ``key=value`` pairs joined by ``&``, where
+#: every key is made only of characters that survive form encoding. That last constraint is
+#: what keeps prose out — "the password was = wrong" has spaces before its equals sign, so
+#: it cannot match, while ``password=lovelace`` can.
+FORM_SHAPE = re.compile(r"[A-Za-z0-9%._~*+-]+=[^&]*(?:&[A-Za-z0-9%._~*+-]+=[^&]*)*")
+
 
 def digest(value: str) -> str:
     """Return the stable redaction marker for ``value``."""
@@ -66,13 +75,22 @@ def redact_headers(
     ]
 
 
-def redact_body(body: bytes, *, include_secrets: bool = False) -> bytes:
+def redact_body(
+    body: bytes, *, content_type: str | None = None, include_secrets: bool = False
+) -> bytes:
     """Redact secrets in a body, returning bytes so the caller owns representation.
 
-    JSON is walked structurally, so a redacted body is still parseable JSON. Anything else
-    that decodes as text is scanned for JWT-shaped values. Bodies that are not valid UTF-8
-    are returned untouched: there is nothing text-shaped to redact, and decoding them
-    would corrupt the bytes.
+    JSON is walked structurally and form-encoded bodies pair by pair, so a redacted body
+    keeps the shape it arrived in. Anything else that decodes as text is scanned for
+    JWT-shaped values. Bodies that are not valid UTF-8 are returned untouched: there is
+    nothing text-shaped to redact, and decoding them would corrupt the bytes.
+
+    ``content_type`` is authoritative when given, and a form-shaped body is redacted as a
+    form even without it. That belt-and-braces is deliberate: a caller who forgets to pass
+    the header would otherwise leak, which is the same failure this exists to prevent.
+
+    Not covered: ``multipart/form-data``. Its parts carry their own headers and boundary
+    framing, and nothing in v1 needs it yet.
     """
     if include_secrets or not body:
         return body
@@ -82,12 +100,45 @@ def redact_body(body: bytes, *, include_secrets: bool = False) -> bytes:
     except UnicodeDecodeError:
         return body
 
+    if _is_form_content_type(content_type):
+        return _redact_form(text).encode("utf-8")
+
     try:
         parsed = json.loads(text)
     except ValueError:
-        return _redact_jwts(text).encode("utf-8")
+        pass
+    else:
+        return json.dumps(_redact_json(parsed), ensure_ascii=False).encode("utf-8")
 
-    return json.dumps(_redact_json(parsed), ensure_ascii=False).encode("utf-8")
+    if FORM_SHAPE.fullmatch(text):
+        return _redact_form(text).encode("utf-8")
+
+    return _redact_jwts(text).encode("utf-8")
+
+
+def _is_form_content_type(content_type: str | None) -> bool:
+    """Whether a Content-Type names form encoding, ignoring parameters and case."""
+    if not content_type:
+        return False
+    return content_type.split(";", 1)[0].strip().lower() == FORM_MEDIA_TYPE
+
+
+def _redact_form(text: str) -> str:
+    """Redact secret-shaped fields of a form body, leaving every other byte alone.
+
+    Rebuilt from the original substrings rather than round-tripped through ``parse_qsl``
+    and ``urlencode``, which would re-encode fields nobody asked to touch. Keys and values
+    are decoded only to decide and to digest, so ``api%5Fkey`` still matches and the digest
+    of a percent-encoded secret matches the same secret seen in a header.
+    """
+    redacted = []
+    for pair in text.split("&"):
+        key, separator, value = pair.partition("=")
+        if separator and SECRET_KEY_PATTERN.search(unquote_plus(key)):
+            redacted.append(f"{key}{separator}{digest(unquote_plus(value))}")
+        else:
+            redacted.append(_redact_jwts(pair))
+    return "&".join(redacted)
 
 
 def _redact_json(value: Any) -> Any:

@@ -61,11 +61,11 @@ Added by P1:
 | Bodies are stored **decoded**, not as they were on the wire | A gzipped blob on disk answers no debugging question. `get_content(strict=False)` so one malformed `Content-Encoding` cannot end the Session. |
 | Body paths on an `Exchange` are relative to the Session directory | Keeps a Session movable and the NDJSON portable. |
 
-## Needs a decision before P2 ships
+## Resolved after P1
 
-**Form-encoded bodies are not key-redacted.** SPEC.md scopes key-based redaction to *JSON* body keys, and that is what `serialize/redact.py` implements. Non-JSON bodies get JWT-shaped values redacted and nothing else — so a form-encoded `grant_type=password&username=ada&password=lovelace` reaches a model with the password in clear.
+**Form-encoded bodies are key-redacted**, and SPEC.md was widened to say so. Key-based redaction had been JSON-only, which left the OAuth 2 password grant — form-encoded by RFC 6749, and one of the likeliest requests to point this tool at — sending `password=…` in clear.
 
-That is not a hypothetical shape: it is the OAuth 2 password grant, form-encoded by RFC 6749, and `POST /token` is exactly the request someone reaches for this tool to inspect. The fix is small (parse `application/x-www-form-urlencoded` and reuse `SECRET_KEY_PATTERN`), but it widens redaction beyond what SPEC.md says, so it was left as a decision rather than taken quietly.
+`redact_body` now takes an optional `content_type`, authoritative when given, and *also* treats a form-shaped body as a form without one. The redundancy is deliberate: a caller who forgets the header would otherwise reintroduce exactly the leak this closes. Fields nobody asked to touch are left byte-for-byte alone rather than round-tripped through `urlencode`.
 
 ## Traps discovered the hard way
 

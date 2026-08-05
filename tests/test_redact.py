@@ -208,3 +208,103 @@ def test_include_secrets_returns_a_faithful_body():
     body = json.dumps({"token": "s3cret"}).encode()
 
     assert redact_body(body, include_secrets=True) == body
+
+
+# --- form-encoded bodies ------------------------------------------------------
+#
+# The RFC 6749 password grant is form-encoded, and POST /token is exactly the request
+# someone reaches for this tool to inspect. Key-based redaction therefore cannot be
+# JSON-only, or the most security-sensitive body shape in the domain goes out in clear.
+
+
+PASSWORD_GRANT = b"grant_type=password&username=ada&password=lovelace"
+
+
+def test_a_form_encoded_password_is_redacted():
+    result = redact_body(PASSWORD_GRANT).decode()
+
+    assert "lovelace" not in result
+    assert f"password={digest('lovelace')}" in result
+
+
+def test_a_form_encoded_body_is_redacted_when_the_content_type_says_so():
+    result = redact_body(PASSWORD_GRANT, content_type="application/x-www-form-urlencoded")
+
+    assert "lovelace" not in result.decode()
+
+
+def test_a_content_type_with_parameters_is_still_recognised():
+    result = redact_body(
+        PASSWORD_GRANT, content_type="application/x-www-form-urlencoded; charset=UTF-8"
+    )
+
+    assert "lovelace" not in result.decode()
+
+
+def test_a_content_type_is_matched_case_insensitively():
+    result = redact_body(PASSWORD_GRANT, content_type="Application/X-WWW-Form-Urlencoded")
+
+    assert "lovelace" not in result.decode()
+
+
+def test_ordinary_form_fields_are_left_byte_for_byte_alone():
+    """Redaction must not silently re-encode the parts it is not redacting."""
+    result = redact_body(b"grant_type=password&scope=read+write&state=a%20b").decode()
+
+    assert result == "grant_type=password&scope=read+write&state=a%20b"
+
+
+def test_a_form_secret_digests_to_the_same_marker_as_a_header_secret():
+    """Comparability has to survive the encoding a secret happened to arrive in."""
+    from_form = redact_body(b"access_token=abc123").decode().split("=", 1)[1]
+    from_header = redact_headers([("X-Auth-Token", "abc123")])[0][1]
+
+    assert from_form == from_header
+
+
+def test_a_percent_encoded_form_secret_digests_to_its_decoded_value():
+    result = redact_body(b"password=lo%2Bvelace").decode()
+
+    assert result == f"password={digest('lo+velace')}"
+
+
+def test_a_percent_encoded_form_key_is_still_matched():
+    result = redact_body(b"api%5Fkey=abc123").decode()
+
+    assert result == f"api%5Fkey={digest('abc123')}"
+
+
+def test_a_blank_form_value_is_preserved():
+    assert redact_body(b"username=ada&state=").decode() == "username=ada&state="
+
+
+def test_a_jwt_in_an_innocuous_form_field_is_still_redacted():
+    result = redact_body(f"grant_type=urn:ietf&assertion={TOKEN}".encode()).decode()
+
+    assert TOKEN not in result
+    assert digest(TOKEN) in result
+
+
+def test_a_redacted_form_body_is_still_parseable_as_a_form():
+    from urllib.parse import parse_qsl
+
+    fields = dict(parse_qsl(redact_body(PASSWORD_GRANT).decode(), keep_blank_values=True))
+
+    assert fields["grant_type"] == "password"
+    assert fields["password"] == digest("lovelace")
+
+
+def test_prose_is_not_mangled_as_a_form():
+    """Sniffing must not fire on text that merely contains an equals sign."""
+    body = b"the password was = wrong, and the retry & fallback both failed"
+
+    assert redact_body(body) == body
+
+
+def test_a_form_shaped_body_is_redacted_even_without_a_content_type():
+    """The sniff is the safety net: a caller that forgets the header must not leak."""
+    assert "lovelace" not in redact_body(PASSWORD_GRANT, content_type=None).decode()
+
+
+def test_include_secrets_returns_a_faithful_form_body():
+    assert redact_body(PASSWORD_GRANT, include_secrets=True) == PASSWORD_GRANT

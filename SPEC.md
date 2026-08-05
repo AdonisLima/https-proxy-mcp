@@ -98,8 +98,12 @@ Redaction applies at two boundaries: **into the model**, and **out of the machin
 Redacted by default:
 
 - Headers: `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`
-- JSON body keys matching `(token|secret|password|api[-_]?key|refresh|access_token|id_token)`
-- JWT-shaped values (`eyJ…`)
+- Body keys matching `(token|secret|password|api[-_]?key|refresh|access_token|id_token)`, in JSON bodies at any depth and in `application/x-www-form-urlencoded` bodies
+- JWT-shaped values (`eyJ…`), under any key and in any text body
+
+Form-encoded bodies are included for a specific reason: the OAuth 2 password grant is form-encoded by RFC 6749, so `POST /token` — one of the most likely requests to point this tool at — would otherwise send `password=…` to the model in clear. A body that is form-*shaped* is treated as one even when no `Content-Type` accompanies it, because a caller who forgets the header should not be able to cause a leak.
+
+Not covered: `multipart/form-data`, whose parts carry their own headers and boundary framing.
 
 Each redacted value is replaced with `<redacted:sha256:xxxxxxxx>` — a stable short digest, so an agent can tell *"this is the same token as the previous request"* or *"this token changed after refresh"* without ever seeing it. That distinction is usually the whole question.
 
