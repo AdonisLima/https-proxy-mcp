@@ -1,0 +1,36 @@
+# The earliest of the feedback loops. Everything here also runs in CI — this is about finding
+# it in a second rather than in a 10x-billed macOS runner two minutes later.
+#
+# Every hook is `language: system` and goes through `uv run`, deliberately. The alternative,
+# pre-commit managing its own pinned copy of ruff and mypy, means two places declaring tool
+# versions that then drift: the commit hook would pass while CI failed, on the same code. The
+# lock file is the single source of truth for what version of anything this project uses.
+#
+# Tests are not here. The fast suite is ~11s and the full one ~44s, which is where people start
+# reaching for --no-verify, and a gate that gets bypassed is worse than one that is honest about
+# its scope. CI runs them.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --force-exclude
+        language: system
+        types: [python]
+        require_serial: false
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types: [python]
+
+      # No filenames: `files = ["src"]` in pyproject.toml is the scope, and handing mypy the
+      # changed files instead would drag tests/ in — which reports ~870 findings and is out of
+      # scope on purpose.
+      - id: mypy
+        name: mypy (src, strict)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false

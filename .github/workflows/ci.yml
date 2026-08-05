@@ -1,0 +1,81 @@
+name: ci
+
+# Push only. Pull requests would double-run everything on a repository where branches are
+# pushed directly, and macOS minutes here are not free — see the billing note below.
+on:
+  push:
+  workflow_dispatch:
+
+# A second push supersedes the first. Without this, pushing twice in a minute pays for both.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # This repository is private, and macOS runners bill against the free allowance at 10x — the
+  # 2,000 monthly minutes are about 200 real macOS minutes. A ~2 minute run costs ~20 of them,
+  # so roughly 100 runs a month.
+  #
+  # macOS anyway, and not Linux: capture routes traffic with `networksetup` and installs trust
+  # with `simctl`. The suite would very likely pass on ubuntu — the machine-mutating paths are
+  # faked outside the three gated tests — but it would be green on a platform no user of this
+  # tool has.
+  #
+  # `macos-15` is arm64 and current. `macos-26` is now `macos-latest` and matches the developer's
+  # own machine; switching is a one-word change if CI ever disagrees with local for an OS reason.
+  test:
+    runs-on: macos-15
+    # The default is 360 minutes. At 10x that is 3,600 charged minutes — nearly twice the whole
+    # monthly allowance, spent by one hung job. The suite takes ~44s locally.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      # tests/test_distribution.py installs the built wheel under *every* interpreter
+      # `requires-python` admits. Installing both explicitly keeps that deterministic rather
+      # than leaving it to an implicit download mid-test.
+      - name: Install both supported interpreters
+        run: uv python install 3.12 3.13
+
+      # --locked fails if uv.lock is out of step with pyproject.toml, which is a real sensor:
+      # a dependency edit that never made it into the lock is otherwise invisible until it
+      # breaks somebody else's checkout.
+      - name: Sync from the lock
+        run: uv sync --locked
+
+      # Not `-m "not integration"`. The integration tests are where the wheel is actually built
+      # and installed, which is the part no other check can substitute for. The three machine
+      # tests stay skipped: they are gated on HTTPS_PROXY_MCP_E2E, which is deliberately not set
+      # here and must never be — they redirect the runner's system proxy.
+      - name: Tests
+        run: uv run pytest -q
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format
+        run: uv run ruff format --check .
+
+      - name: Types
+        run: uv run mypy
+
+  # Separate, and on Linux at 1x, because scoring the harness needs no macOS at all. Running it
+  # inside the test job would put an npx download in front of a 10x-billed runner and make a
+  # network blip cost a full re-run.
+  harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned exactly. An unpinned major could add checks and fail a build for a reason that
+      # has nothing to do with the commit that triggered it.
+      - name: Score the harness
+        run: npx harness-score@1.5.1 --md "$GITHUB_STEP_SUMMARY" --min-level 4

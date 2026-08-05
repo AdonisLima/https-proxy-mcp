@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Machine-specific scratch: recorded proxy state, local recovery notes.
+.local/
+
+# Credentials. This project needs none and reads none — the entry is defensive, so that an
+# agent working here cannot stage one by accident. Session directories hold unredacted bodies
+# and live outside the repo under $HTTPS_PROXY_MCP_ROOT; they are never written here.
+.env
+.env.*
+
+# Per-developer overrides of .claude/settings.json. The committed settings.json carries the
+# hooks everyone should have; this is where someone disables one for themselves.
+.claude/settings.local.json
