@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 from https_proxy_mcp.server.exchange_tools import register_exchange_tools
 from https_proxy_mcp.server.session_tools import register_session_tools
 from https_proxy_mcp.server.state import CaptureState
+from https_proxy_mcp.server.trust_tools import register_trust_tools
 
 SERVER_NAME = "https-proxy-mcp"
 
@@ -43,6 +44,7 @@ def build_server(state: CaptureState | None = None) -> FastMCP:
     capture_state = state if state is not None else CaptureState()
 
     register_session_tools(server, capture_state)
+    register_trust_tools(server, capture_state)
     register_exchange_tools(server, capture_state)
     return server
 

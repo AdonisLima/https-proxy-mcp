@@ -92,7 +92,12 @@ def test_a_colliding_session_id_fails_loudly(tmp_path):
 
 def test_the_manifest_records_the_session(tmp_path):
     session = Session.create(
-        tmp_path, target="ios-simulator", port=9090, scope=["api.example.com"], now=at(10)
+        tmp_path,
+        target="ios-simulator",
+        port=9090,
+        scope=["api.example.com"],
+        udid="F48AAE9F-4D3F-4817-9050-7B4B0024CF07",
+        now=at(10),
     )
 
     manifest = json.loads((session.dir / "session.json").read_text())
@@ -103,6 +108,8 @@ def test_the_manifest_records_the_session(tmp_path):
         "target": "ios-simulator",
         "port": 9090,
         "scope": ["api.example.com"],
+        # Recorded so a Session directory found later says which simulator produced it.
+        "udid": "F48AAE9F-4D3F-4817-9050-7B4B0024CF07",
     }
 
 

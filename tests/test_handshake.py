@@ -13,7 +13,7 @@ import sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from test_server import P2_TOOLS
+from test_server import REGISTERED_TOOLS
 
 SERVER_ARGS = ["-c", "from https_proxy_mcp import main; main()"]
 
@@ -26,4 +26,4 @@ async def test_stdio_handshake_reports_the_server_and_its_tools():
         assert result.serverInfo.name == "https-proxy-mcp"
 
         tools = await session.list_tools()
-        assert {tool.name for tool in tools.tools} == P2_TOOLS
+        assert {tool.name for tool in tools.tools} == REGISTERED_TOOLS

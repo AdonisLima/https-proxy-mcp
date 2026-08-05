@@ -27,7 +27,8 @@ from https_proxy_mcp.capture.session import (
     default_root,
     prune_sessions,
 )
-from https_proxy_mcp.targets import CaptureTarget, build_target
+from https_proxy_mcp.targets import CaptureObservations, CaptureTarget, build_target
+from https_proxy_mcp.targets.systemproxy import CommandRunner, run_command
 
 NOT_RECORDING = "not recording; call start_capture first"
 
@@ -44,9 +45,13 @@ class CaptureState:
         root: Path | str | None = None,
         *,
         runtime_factory: Callable[..., Any] = ProxyRuntime,
+        runner: CommandRunner = run_command,
     ) -> None:
         self._root = Path(root) if root is not None else default_root()
         self._runtime_factory = runtime_factory
+        # Handed to every target that shells out, so a test can drive the whole tool surface
+        # without networksetup or simctl touching the machine.
+        self._runner = runner
         self._session: Session | None = None
         self._store: ExchangeStore | None = None
         self._runtime: Any | None = None
@@ -70,6 +75,76 @@ class CaptureState:
     def scope(self) -> tuple[str, ...] | None:
         """The recording Session's Scope, or ``None`` when there is none."""
         return self._session.scope if self._session is not None else None
+
+    @property
+    def root(self) -> Path:
+        """Where Sessions, the sentinel and the shared confdir live."""
+        return self._root
+
+    @property
+    def runner(self) -> CommandRunner:
+        """How this state shells out. Exposed so the trust tools share the test seam."""
+        return self._runner
+
+    def build_target(self, name: str, *, udid: str | None = None) -> CaptureTarget:
+        """A Capture Target by name, wired to this state's root and command runner.
+
+        Public because the trust tools need one *without* a Session: an agent should be able to
+        ask whether a device trusts the authority, or install it, before committing to a capture.
+        """
+        try:
+            return build_target(name, udid=udid, root=self._root, runner=self._runner)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+
+    def observations(self) -> CaptureObservations:
+        """What the store knows and a target cannot: whether anything is arriving.
+
+        ``reported`` is counted against the same narrowing a listing applies, which is what lets
+        a diagnosis say "traffic arrived and the Scope hid it" rather than "no traffic".
+        """
+        if self._store is None:
+            return CaptureObservations()
+
+        store = self._store
+        reported, _ = self.reporting().apply(list(store))
+        failures = store.tls_failures
+        return CaptureObservations(
+            exchanges=store.recorded_count,
+            tls_failures=store.tls_failure_count,
+            # Deduplicated, order preserved: a pinned app retries, and the same host repeated
+            # forty times says nothing the first did not.
+            tls_failure_hosts=tuple(
+                dict.fromkeys(failure.host for failure in failures if failure.host)
+            ),
+            reported=len(reported),
+        )
+
+    def diagnose(self) -> dict[str, Any]:
+        """Why capture is or is not working, as ``diagnose_capture`` reports it.
+
+        Answers rather than raises when nothing is recording. This is the tool an agent reaches
+        for when it is already confused, so failing here would answer "why is nothing working?"
+        with one more thing that does not work.
+        """
+        if not self.recording or self._target is None:
+            return {
+                "status": "no_connect",
+                "detail": NOT_RECORDING,
+                "remediation": "call start_capture, then drive the app and try again",
+                "observed": _observed_dict(CaptureObservations()),
+            }
+
+        observed = self.observations()
+        diagnosis = self._target.diagnose(observed)
+        return {
+            "status": diagnosis.status,
+            "detail": diagnosis.detail,
+            "remediation": diagnosis.remediation,
+            "target": self._session.target if self._session else None,
+            # Reported so an agent can check the reasoning rather than having to trust it.
+            "observed": _observed_dict(observed),
+        }
 
     def reporting(self, *, include_denied: bool = False) -> ReportingFilter:
         """How a listing narrows what it shows: the Session's Scope, plus the denylist.
@@ -104,6 +179,7 @@ class CaptureState:
         target: str,
         port: int,
         scope: list[str] | None,
+        udid: str | None = None,
         capacity: int = ExchangeStore.DEFAULT_CAPACITY,
     ) -> dict[str, Any]:
         """Begin a Session: prune, prepare the target, start the proxy, then route to it."""
@@ -112,15 +188,14 @@ class CaptureState:
                 f"already recording into Session {self._session.id}; call stop_capture first"
             )
 
-        try:
-            capture_target = build_target(target)
-        except ValueError as exc:
-            raise ToolError(str(exc)) from None
+        capture_target = self.build_target(target, udid=udid)
 
+        # prepare() is where a target repairs state a dead predecessor left behind, so it runs
+        # before anything else can trip over it.
         capture_target.prepare()
         trust = capture_target.ensure_trusted()
 
-        session = Session.create(self._root, target=target, port=port, scope=scope)
+        session = Session.create(self._root, target=target, port=port, scope=scope, udid=udid)
         # Pruned *after* creating, so the invariant is exactly "RETAINED_SESSIONS remain"
         # rather than that many plus the new one. The new Session is the newest, so it is
         # never the one removed.
@@ -206,3 +281,13 @@ class CaptureState:
             "session_dir": str(self._session.dir),
             "trust": self._trust,
         }
+
+
+def _observed_dict(observed: CaptureObservations) -> dict[str, Any]:
+    """The counts a diagnosis reasoned from, flattened for the wire."""
+    return {
+        "exchanges": observed.exchanges,
+        "reported": observed.reported,
+        "tls_failures": observed.tls_failures,
+        "tls_failure_hosts": list(observed.tls_failure_hosts),
+    }

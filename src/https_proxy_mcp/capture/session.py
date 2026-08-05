@@ -62,6 +62,9 @@ class Session:
     #: Hosts the agent is interested in. Narrows what is *reported*, never what is
     #: captured (CONTEXT.md). ``None`` means everything is reported.
     scope: tuple[str, ...] | None
+    #: Which device the traffic came from, when the target names one. Recorded so a Session
+    #: directory found later says which simulator produced it.
+    udid: str | None = None
 
     @classmethod
     def create(
@@ -71,6 +74,7 @@ class Session:
         target: str,
         port: int,
         scope: list[str] | None = None,
+        udid: str | None = None,
         now: datetime | None = None,
     ) -> Session:
         """Create the Session directory and write its manifest.
@@ -96,6 +100,7 @@ class Session:
             target=target,
             port=port,
             scope=tuple(scope) if scope is not None else None,
+            udid=udid,
         )
         (session_dir / MANIFEST_FILENAME).write_text(json.dumps(session.to_manifest(), indent=2))
         return session
@@ -108,6 +113,7 @@ class Session:
             "target": self.target,
             "port": self.port,
             "scope": list(self.scope) if self.scope is not None else None,
+            "udid": self.udid,
         }
 
 

@@ -11,10 +11,16 @@ from https_proxy_mcp import build_server
 from https_proxy_mcp.server import SERVER_NAME
 
 #: Every tool P2 ships. Trust tools arrive in P3; Runs and Timelines in P4.
-P2_TOOLS = {
+#: Every tool the v1 read-only surface registers. Asserted exactly rather than by subset, so
+#: adding one is a deliberate act and removing one cannot pass unnoticed.
+REGISTERED_TOOLS = {
     "start_capture",
     "stop_capture",
     "get_status",
+    "diagnose_capture",
+    "get_trust_status",
+    "install_authority",
+    "install_authority_system",
     "list_exchanges",
     "get_exchange",
     "get_exchange_body",
@@ -34,8 +40,8 @@ def test_server_builds_with_expected_identity():
     assert build_server().name == SERVER_NAME
 
 
-async def test_the_p2_tool_surface_is_registered(tools):
-    assert {tool.name for tool in tools} == P2_TOOLS
+async def test_the_tool_surface_is_registered(tools):
+    assert {tool.name for tool in tools} == REGISTERED_TOOLS
 
 
 async def test_every_tool_describes_when_to_use_it(tools):

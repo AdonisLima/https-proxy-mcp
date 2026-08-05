@@ -75,6 +75,32 @@ class IosSimulatorTarget:
         """
         self._proxy.repair()
 
+    def authority_pem(self) -> Path:
+        """The Interception Authority's PEM, generating one if there is none yet."""
+        return ensure_authority(self._confdir)
+
+    def trust_status(self) -> TrustStatus:
+        """Report trust without changing it.
+
+        Separate from :meth:`ensure_trusted` because ``get_trust_status`` is a question, and a
+        question that alters what it asks about is a trap: an agent checking whether a device was
+        already trusted would silently arrange trust and never find out.
+        """
+        pem = self.authority_pem()
+        try:
+            device = self._resolve()
+        except LookupError as exc:
+            return TrustStatus(trusted=False, detail=str(exc))
+
+        trusted = self._simctl.trusts(device, pem)
+        return TrustStatus(
+            trusted=trusted,
+            detail=(
+                f"{device.describe()} {'trusts' if trusted else 'does not trust'} the"
+                f" Interception Authority at {pem}"
+            ),
+        )
+
     def ensure_trusted(self) -> TrustStatus:
         """Install the Interception Authority into the device, then check that it took.
 

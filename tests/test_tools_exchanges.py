@@ -10,38 +10,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
-from https_proxy_mcp.capture import CapturedExchange, ExchangeStore
+from https_proxy_mcp.capture import CapturedExchange
 from https_proxy_mcp.serialize import digest
 from https_proxy_mcp.server import build_server
 from https_proxy_mcp.server.state import CaptureState
+from stub_runtime import StubRuntime
 from tool_calls import call
 
 TOKEN = "Bearer s3cret-token"
-
-
-class StubRuntime:
-    """A ProxyRuntime that binds nothing. The real one has its own tests."""
-
-    def __init__(self, store: ExchangeStore, *, port: int, confdir: Any, host: str = "127.0.0.1"):
-        self._store = store
-        self._port = port or 51234
-        self.host = host
-        self.is_running = False
-
-    @property
-    def port(self) -> int:
-        return self._port
-
-    async def start(self) -> None:
-        self.is_running = True
-
-    async def stop(self) -> None:
-        self.is_running = False
 
 
 def captured(**overrides) -> CapturedExchange:
