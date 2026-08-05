@@ -1,20 +1,20 @@
-# Handoff — 2026-08-05 (P3 complete)
+# Handoff — 2026-08-05 (P4 complete)
 
 Picking this up in a fresh session. Everything needed is in the repo; this file says where to start and what not to relitigate.
 
 ## State
 
-**P0, P1, P2 and P3 complete and committed.** On `main`, clean tree, no remote configured.
+**P0 through P4 complete and committed.** On `main`, clean tree, **no remote configured**.
 
-Verify in one command: `uv run pytest -q && uv run ruff check .` → 465 passed, 2 skipped, all checks passed.
+Verify in one command: `uv run pytest -q && uv run ruff check .` → 641 passed, 3 skipped, all checks passed.
 
-The 2 skipped are the live simulator acceptance tests. They are the only thing in the project that changes the developer's machine, so they are gated:
+The 3 skipped are the live machine tests. They are the only things in the project that change the developer's machine, so they are gated:
 
 ```bash
-HTTPS_PROXY_MCP_E2E=1 uv run pytest tests/test_simulator_e2e.py -q     # ~60s, creates its own simulator
+HTTPS_PROXY_MCP_E2E=1 uv run pytest tests/test_simulator_e2e.py tests/test_maestro_e2e.py -q
 ```
 
-62 tests are marked `integration` — they bind sockets, spawn `mitmdump`, `curl` and a real MCP server subprocess, and `kill -9` one. `uv run pytest -m "not integration"` runs the other 390 in about five seconds.
+`uv run pytest -m "not integration"` runs the fast majority in about five seconds.
 
 Try it by hand:
 
@@ -26,42 +26,49 @@ uv run https-proxy-mcp          # speaks MCP over stdio
 
 1. **[CONTEXT.md](./CONTEXT.md)** — the domain language. Use these words exactly; they were chosen to dodge a real collision (mitmproxy's "flow" vs Maestro's "flow"). If you find yourself writing "flow", stop. The exceptions are `capture/addon.py` and `capture/filtering.py`, where `flow` names mitmproxy's own object at the boundary.
 2. **[SPEC.md](./SPEC.md)** — the v1 spec. Tool surface, semantics, numeric defaults.
-3. **[PLAN.md](./PLAN.md)** — six phases with acceptance criteria. You are starting P4.
+3. **[PLAN.md](./PLAN.md)** — six phases with acceptance criteria. You are starting P5.
 4. **[docs/adr/](./docs/adr/)** — five decisions and why. Two deviate from the research that preceded the project, so read them before "fixing" anything that looks wrong.
+5. **[docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md](./docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md)** — P4's design, including the four probe findings that shaped it.
 
 ## What exists now
 
 | Module | Contents |
 |---|---|
-| `capture/exchange.py` | `CapturedExchange` (what the addon saw) and `Exchange` (what the store kept), `BodyRef`, NDJSON round-trip |
-| `capture/store.py` | `ExchangeStore` — ring buffer, eviction counter, body spill and read-back, append-only log, `0700`, TLS-failure counter |
+| `capture/exchange.py` | `CapturedExchange`, `Exchange`, `PendingExchange`, `BodyRef`, NDJSON round-trip |
+| `capture/store.py` | `ExchangeStore` — ring buffer, eviction counter, body spill, append-only log, `0700`, TLS-failure counter, **pending registry** |
 | `capture/addon.py` | `CaptureAddon` — the only module that knows mitmproxy's flow shapes |
 | `capture/session.py` | Session identity, layout, `$HTTPS_PROXY_MCP_ROOT`, retention to 10 |
 | `capture/runtime.py` | `ProxyRuntime` — mitmproxy in this process on the server's event loop |
 | `capture/filtering.py` | mitmproxy filter expressions applied to Exchanges |
-| `capture/reporting.py` | The builtin denylist and the Scope — what is *reported*, never what is captured |
+| `capture/reporting.py` | The builtin denylist, the Scope, and the Run window — SPEC.md's three narrowings |
+| `correlate/steps.py` | `Step` — the entire contract the Correlator depends on |
+| `correlate/timeline.py` | `Occurrence`, owner-plus-overlap arithmetic, `Timeline`. **Pure: no I/O** |
+| `runs/registry.py` | `Run`, `RunRegistry` — identity, directory, manifest |
+| `runs/process.py` | Spawning the test command, Maestro flag injection, timeouts, output capture |
+| `eventsources/` | `EventSource` protocol, `StepLog` (explicit marks), `MaestroEventSource` |
 | `serialize/redact.py` | Headers, JSON keys, form keys and JWTs → `<redacted:sha256:xxxxxxxx>` |
 | `serialize/views.py` | Summaries, previews, slices, pagination, curl rendering |
+| `serialize/timeline_views.py` | Summary-first Timeline rendering, and the explanation sentence |
+| `serialize/har.py` | HAR 1.2, redacted by default |
 | `targets/systemproxy.py` | The Mac's proxy settings, and the sentinel protocol that guarantees they come back |
 | `targets/simctl.py` | CoreSimulator: which device, install the authority, and *verify* trust |
 | `targets/ios_simulator.py` | The iOS Simulator Capture Target, including the five-way diagnosis |
 | `targets/` | `CaptureTarget` protocol, `TrustStatus`, `Diagnosis`, `CaptureObservations`, `CurlTarget` |
-| `server/` | `CaptureState` plus the fourteen registered tools |
+| `server/` | `CaptureState` plus the **twenty** registered tools |
 
-## Next: P4 — Runs and Timelines
+## Next: P5 — Hardening and distribution
 
-`run_test` process wrapper. `start_step` / `end_step` as the universal Event Source. Maestro Event Source parsing `commands-*.json`, with both output flags pointed at one directory. Correlator implementing owner-plus-overlap. `get_timeline` with summary-first rendering. `export_har`, redacted by default.
+`SKILL.md`, README, session retention and pruning, `0700` on session directories, adapter contract test suites, PyPI packaging for `uvx`.
 
-**Acceptance:** a deliberately failing Maestro flow produces a Timeline showing the failing assertion *and* the Exchange still in flight when it began — the worked example from SPEC.md, reproduced for real.
+**Acceptance:** installable and usable on a second machine from published artifacts alone.
 
-This is the phase that delivers the reason the project exists. Everything before it is plumbing.
+Several P5 items are already done and only need checking off: retention and pruning, `0700`, and contract suites for both adapter families (`tests/test_targets.py`, and the parametrised suite at the end of `tests/test_eventsources.py`). What is genuinely left is `SKILL.md`, PyPI packaging, and `serverInfo.version`.
 
-What P3 leaves you:
+What P4 leaves you:
 
-- **`ReportingFilter` is the "narrow what is reported" mechanism**, and the Run window is meant to join it. SPEC.md orders the narrowings: Run window first, then denylist, then Scope. The first is the one still missing, and it belongs in `capture/reporting.py` next to the other two rather than in the Timeline code.
-- **`CaptureObservations` is how the core tells a target what it cannot see.** If P4 needs to hand the correlator something similar, follow the same shape — a frozen dataclass passed in, not a reach-back into state.
-- **`_page()` in `server/exchange_tools.py` applies narrowing for every listing**, so a Timeline that reuses it inherits the denylist and Scope for free. If `get_timeline` does its own assembly, it needs to apply `state.reporting()` deliberately.
-- **`store.tls_failures` records handshakes that never became Exchanges.** A Timeline may want them: "the assertion failed and the connection it needed never completed a handshake" is exactly the kind of sentence this project exists to produce.
+- **`serverInfo.version` still reports the MCP SDK's version** (1.29.0), not ours, because `FastMCP.__init__` takes no `version` parameter. This was deferred to P5 and P5 is now.
+- **`SKILL.md` has a clear brief already**, written in SPEC.md: choose a target, run `diagnose_capture` before believing an empty result, prefer `wait_for_exchanges` over polling, drill down rather than dumping. Add to it: run the test through `run_test` and read `get_timeline`, because that is the whole point and an agent will not guess it.
+- **Twenty tools is a lot of surface for one prompt.** `tests/test_server.py` asserts the exact set, and every tool has a docstring written as a prompt. Worth reading them as a group before writing `SKILL.md`, because they were written individually.
 
 ## Decisions already made — do not reopen
 
@@ -106,6 +113,21 @@ Added by P3:
 | `wait_for_exchanges` and `get_exchange` are **exempt** from the denylist and Scope | Inconsistent with the listings. Both are explicit: a filter naming a host, or an id that came from somewhere. Letting the denylist veto a wait turns "wait for this request" into a timeout reporting that it never happened. |
 | Session bodies live under `tmp_path` in every test, never the real home | Belt and braces on top of `$HTTPS_PROXY_MCP_ROOT`. Those directories hold real credentials. |
 
+Added by P4:
+
+| Decision | Why it looks odd |
+|---|---|
+| Pending requests are a **parallel registry**, not Exchanges with a null `t_end` | Looks like duplication. Folding them in would assign ids at request time, inverting the documented completion ordering, and would make `wait_for_exchanges` return before a status code existed — so "wait for `POST /auth`, then check it returned 401" would stop working. `pending` is deliberately absent from `ExchangeStore.__iter__`, and that one omission is what leaves every listing tool untouched by P4. |
+| Pending records **survive `close()`** | Looks like a leak. "Two requests were still open when the Session ended" is information, and often the answer to "why did the assertion time out?". A completion arriving after close leaves the record alone too, since the Exchange is not being recorded and clearing it would lose the request entirely. |
+| Ownership is **gap-tolerant** — the last Step to have *started*, not one strictly containing the Exchange | Looks sloppy. Maestro's inter-command overhead is milliseconds wide and a tap's request routinely starts just after the tap's own metadata window closed. Requiring containment drops "the tap made this request" into Background for the commonest shape of traffic there is. |
+| The Run window narrows by **intersection**, not by start time | Looks like it lets in traffic from before the Run. It lets in exactly the traffic that matters: a request already in flight when the Run began is the case ADR-0004 exists for. |
+| A long-lived connection is classed by `101` **or `text/event-stream`**, with no duration threshold | A threshold looks more general. It also needs tuning, and would miss a short WebSocket while firing on a slow upload. Both signals here are exact statements by the protocol. Answers open question 2. |
+| `get_timeline` with no `run_id` means the **latest Run**; `export_har` with none means the **whole Session** | Two defaults for one parameter looks inconsistent. A Timeline is about a Run; an export is an artifact of everything captured. An `export_har` that silently held only the last few milliseconds of a Run is the more expensive surprise. |
+| `start_step` with one already open is an **error** | An implicit close looks friendlier. It would have to invent an outcome, and a Step's outcome is the entire reason for recording it — writing "passed" over something that failed is the one unsafe direction. |
+| Maestro's `defineVariables` and `applyConfiguration` are **filtered out** of Steps | Dropping data looks wrong. Neither is an action or an assertion (CONTEXT.md) and neither can cause a failure. Filtered by an explicit list of keys, so an *unrecognised* command is kept. |
+| An unrecognised Maestro status becomes `unknown`, never `passed` | Looks pedantic. A Timeline claiming a Step succeeded when nobody knows is worse than one admitting ignorance, and Maestro may add a status in any release. |
+| A mistyped target option is **refused by the registry** | Looks like ceremony for a fixed call site. Both targets accept `**_options` so one call shape fits all of them, which means neither would notice — and a mistyped `udid` leaves the simulator target choosing a device itself, which is the "capture the wrong app and report success" outcome `start_capture` forbids. |
+
 ## The finding that shaped P3
 
 Worth its own section, because it is a property of the domain rather than a detail of the code, and because the obvious "improvement" is to undo it.
@@ -130,6 +152,14 @@ Consequences, all of them load-bearing:
 - **This is SPEC.md's own sentence coming true**: host filtering "is not a convenience here, it is the only available mechanism".
 
 If P4 or later adds process attribution — `--mode local`, open question 1 — this constraint relaxes and `tls_failed` can become unconditional. Until then, do not "fix" it.
+
+## The finding that shaped P4
+
+Maestro's `commands-*.json` **is not in execution order.** A failing two-command flow came back as `[seq 3, 0, 1, 2]` — the FAILED assertion first, having run last — and a *passing* flow was also scrambled (`1, 2, 0`), so it is not a failure-ordering quirk. `metadata.sequenceNumber` is the authority.
+
+This is worth its own section for the same reason the `Empty` bug was: **every test would have passed.** Ordering by array position produces a Timeline that is internally consistent, renders cleanly, and puts the failure before the launch that preceded it. It reads as a correlation bug and it is not one. The only reason it was caught is that the artifact was probed before anything was designed against it.
+
+The same probe found that one failing command carries **33 KB of `error.hierarchyRoot`** — the entire device UI tree — making a two-command artifact 123 KB. That artifact is checked in at `tests/fixtures/maestro-commands-failing-assert.json`, hierarchy and all, and a test asserts the parser drops it. A second test caps *every* Step's error length structurally, so a new Maestro error field cannot slip through.
 
 ## Traps discovered the hard way
 
@@ -166,7 +196,18 @@ Added by P3, all found by running against the real thing:
 - **`simctl list devices -j` reports `dataPath`.** Use it rather than rebuilding the path from the UDID.
 - **Never run an interactive `sudo` from this server.** It speaks JSON-RPC over stdin, so a password prompt reads the client's next message as a password attempt and hangs the session with no error and no way out. `install_authority_system` uses `sudo -n` and hands back the command for a human when credentials are not cached. A test asserts every `sudo` call carries `-n`.
 - **The store gets written to after `close()`.** Connections still in flight when `stop_capture` runs deliver their hook afterwards, and mitmproxy renders the exception as `Addon error: I/O operation on closed file` — one line per open connection, looking exactly like a defect. `record()` now ignores late arrivals and counts them in `dropped_after_close`.
-- **A `-m` on the command line replaces any default marker expression from `addopts`.** So gating a machine-mutating test with a marker is unsafe: `pytest -m "not integration"` would silently opt back in. `tests/test_simulator_e2e.py` is gated on `HTTPS_PROXY_MCP_E2E=1` for that reason.
+- **A `-m` on the command line replaces any default marker expression from `addopts`.** So gating a machine-mutating test with a marker is unsafe: `pytest -m "not integration"` would silently opt back in. The live tests are gated on `HTTPS_PROXY_MCP_E2E=1` for that reason.
+
+Added by P4:
+
+- **Maestro's `commands-*.json` is not in execution order.** See "the finding that shaped P4" above. Order by `metadata.sequenceNumber`.
+- **`metadata.timestamp` is epoch *milliseconds*** and marks the command's **start**; `duration` is milliseconds too. Missing the conversion puts every Step about fifty thousand years from the traffic it should align with.
+- **`--test-output-dir` does not contain the debug output.** Its own `--help` says so and a probe left the directory empty; `commands-*.json` lives under `--debug-output` alone. Pointing both at one directory is still worth doing so artifacts stay together, but only one of them matters.
+- **The artifact layout differs by flag.** With `--flatten-debug-output` it is `<dir>/commands-(flow.yaml).json`; without it, `<dir>/.maestro/tests/<timestamp>/commands-*.json` — a **hidden** directory. Filenames embed the flow name in literal parentheses, not a timestamp. The parser searches recursively for both; `run_test` injects the flatten flag anyway.
+- **Maestro exits 1 on a failing flow and 0 on a passing one.** Obvious in hindsight; the first probe read `$?` after a pipe to `tail` and got tail's status instead, which said 0 for a flow that had plainly failed. Beware `$?` after a pipeline.
+- **A timeout must kill the process *group*.** Maestro launches a JVM. Killing only the wrapper leaves it holding the simulator and the port, so the *next* Run fails for a reason that looks entirely unrelated. `start_new_session=True` plus `os.killpg`, tested with a real orphaned child.
+- **`maestro openLink` to a private-IP `http://` URL did not make Safari fetch it.** A hanging sink on the host's LAN address was never reached, so `pending` stayed empty and the acceptance test passed on incidental Safari traffic instead. **The test was green either way** — it was caught only by rebuilding the Timeline from the artifacts afterwards. The deterministic proof now lives in `tests/test_pending_e2e.py`, driven through `curl`. If you want to force real device traffic to hang, verify the device actually requests your URL first.
+- **A test that reads stdin from a subprocess cannot prove stdin was closed**, because pytest has already redirected it. That test passed with the precaution removed. It now asserts the spawn arguments instead. Applies to anything about the environment a child inherits.
 
 ## Manual recovery
 
@@ -180,38 +221,35 @@ networksetup -setproxybypassdomains "Wi-Fi" Empty
 cat ~/.https-proxy-mcp/proxy-state.json    # what it was before, if the sentinel survives
 ```
 
+The developer machine's known-good state is also recorded in `.local/` (gitignored) by both live-test sessions: web and secure proxies both `Enabled: No`, server `127.0.0.1`, port `9090`, no bypass domains.
+
 ## Deliberately not built yet
 
 - **`json_path` on `get_exchange_body`.** In SPEC.md's table. Doing it properly means a JSONPath dependency or a hand-rolled subset. Decide which when something wants it.
-- **In-flight Exchanges.** Recording happens on completion, so a request still hanging is not in the store. `tail_exchanges` shows completions, not attempts. **P4 will probably want this** — "the Exchange still in flight when the assertion began" is the phase's acceptance criterion, and the store currently cannot answer it for a request that never finished. Additive (`record_pending` / `complete`), not a rewrite, but decide it deliberately and early.
-- **The Run window as a narrowing.** `ReportingFilter` has the denylist and the Scope; SPEC.md's first narrowing is the Run window, which arrives with P4.
-- **`serverInfo.version`** still reports the MCP SDK's version (1.29.0), not ours, because `FastMCP.__init__` takes no `version` parameter. Deferred to P5.
+- **WebSocket *message* capture.** The upgrade Exchange is recorded and classed long-lived; the individual frames are not. Open question 2 asked how streams should *appear* in an interval model, which the long-lived rule answers; capturing their contents is a separate v1.1 question.
+- **Reading Runs back from disk.** `RunRegistry` writes `run.json` for durability but keeps its index in memory, so a Session directory found later is readable by hand and not by `list_runs`. Nothing needs it yet.
+- **`serverInfo.version`** still reports the MCP SDK's version (1.29.0), not ours, because `FastMCP.__init__` takes no `version` parameter. **P5.**
 - **Android Emulator, write tools, `--mode local`.** v1.1, per PLAN.md.
 
 ## Open questions
 
 1. Can `--mode local:<spec>` scope to the app process inside CoreSimulator? Now more interesting than it was: it is what would let `diagnose_capture` report pinning without a Scope. Still v1.1.
-2. How should WebSocket and long-lived streaming connections appear in an interval model? They overlap everything by nature. **Will matter in P4.**
-3. Do Detox / Appium / Playwright / XCUITest expose per-Step timings rich enough for the `Step` contract, or do they need explicit marks?
+2. ~~How should WebSocket and long-lived streaming connections appear in an interval model?~~ **Answered by P4:** classed long-lived on `101` or `text/event-stream`, owned once by the Step that opened them, never repeated as an Overlap.
+3. Do Detox / Appium / Playwright / XCUITest expose per-Step timings rich enough for the `Step` contract, or do they need explicit marks? Less pressing now: `start_step`/`end_step` covers any of them without an adapter, so this is an enrichment question rather than a blocking one.
 4. ~~Does `simctl keychain` require a booted simulator?~~ **Answered: yes.** See the traps list.
 5. How should a non-UTF-8 body be represented? Settled for now — described in previews, base64 in slices — but nobody has used it against real binary traffic yet.
-
-## Background research
-
-The knowledge base this project was specced from lives at `~/Documents/Projects/knowledge/traffic-sniffing-mcp` — 7 articles, 26 sources, covering mitmproxy internals, both platform setups, prior art, and the correlation problem. Its `outputs/queries/2026-07-28 mitmproxy-mcp-implementation-plan.md` is the earlier plan that SPEC.md supersedes. Useful for *why* something is true; SPEC.md and the ADRs are authoritative for *what we're building*.
-
-Three things in that KB are known-stale relative to this repo: it says the SDK class is `MCPServer` in v2 docs, it ranks clock skew as a top risk (ADR-0003 removes that by construction), and any trust-store guidance it carries will describe the `sha1` layout without mentioning that iOS 26 uses `sha256`.
+6. **New:** `run_test` blocks, so explicit Steps cannot be interleaved with it. Maestro's artifacts cover the wrapped case and `start_step`/`end_step` covers the agent-driven case, so nothing is unreachable — but a tool that wanted both would need `run_test` to run in the background. `get_timeline` returns an explanatory `note` when this bites rather than an unexplained empty result.
 
 ## How the previous sessions worked
 
-Not written down anywhere else, and it is what produced 465 tests with no known defects.
+Not written down anywhere else, and it is what produced 641 tests with no known defects.
 
 **Strict TDD, with the RED step actually observed.** Write the test, run it, read the failure, confirm it fails for the intended reason, then implement.
 
-**Probe unknown platform APIs with a throwaway script before designing against them.** P3's whole design came out of four short probes: reading the real `networksetup` output, `scutil` for the primary service, `simctl keychain` against a shut-down device, and the trust store's schema. Each took a minute and each changed the design. Two of them contradicted the documentation.
+**Probe unknown platform APIs with a throwaway script before designing against them.** P3's whole design came out of four short probes. P4's came out of two, against a throwaway simulator, and they changed the design twice and prevented one wrong Timeline. Each took a minute. Two of them contradicted the documentation.
 
-**Teeth-check acceptance tests by deliberately breaking the code.** Making `repair()` a no-op failed three of the seven `kill -9` tests; making the proxy parser match loosely inverted the enabled flag; moving the sentinel write after the mutations failed the ordering test. A test that has never been seen to fail is not yet known to test anything.
+**Teeth-check acceptance tests by deliberately breaking the code.** Every P4 unit was checked this way — thirty-one deliberate breaks across nine commits, each expected to fail one named test. Two were more valuable than the rest: one break did not fail anything because the patch had not applied (so the check itself needs verifying), and one test turned out unable to fail at all under pytest and was rewritten.
 
 **Record the machine's real state before mutating it, and diff afterwards.** This is how the `Empty` bug was found, and nothing else would have found it — every test passed throughout. Applies to any state the tool writes that it did not create.
 
-**The live acceptance test earns its keep.** Its first run found three defects and one design constraint that 450 stubbed tests had not. Run it before believing a phase that touches the platform is done.
+**Read the artifacts a green test left behind.** New in P4 and it earned its place immediately: the acceptance test passed, and rebuilding its Timeline from the session directory afterwards showed that the mechanism it was supposed to be exercising had never fired. A green test tells you an assertion held, not that it held for the reason you intended.

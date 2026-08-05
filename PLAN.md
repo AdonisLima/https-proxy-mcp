@@ -50,6 +50,12 @@ That last check is the one that matters most in this phase. Test it deliberately
 
 This is the phase that delivers the reason the project exists. Everything before it is plumbing.
 
+**Met.** `tests/test_maestro_e2e.py` ran against a throwaway simulator: a real failing Maestro flow, exit 1, three Steps parsed from the real artifact, 62 Exchanges captured of which 15 fell inside the Run window, and a Timeline row reading *`assertCondition: "ThisTextIsDefinitelyNotOnScreen"` began while `#46 GET token.safebrowsing.apple/...` (200) was still in flight*. The machine's proxy configuration was byte-identical afterwards.
+
+The overlap there is real but incidental — Safari's own traffic during a 17-second assertion. The deterministic proof of the in-flight path lives in `tests/test_pending_e2e.py`, which drives it through a real proxy with `curl` and a socket that never answers; the first attempt to force it inside the simulator test did not work, and that is recorded in HANDOFF.md's traps.
+
+Open question 2 is answered: a long-lived connection (status `101`, or `text/event-stream`) is owned once by the Step that opened it and never repeated as an Overlap.
+
 ## P5 — Hardening and distribution
 
 `SKILL.md`, README, session retention and pruning, `0700` on session directories, adapter contract test suites, PyPI packaging for `uvx`.

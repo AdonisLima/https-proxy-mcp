@@ -4,11 +4,12 @@ An MCP server that captures the HTTPS traffic of an app under test and interleav
 
 A failing assertion tells you the UI was wrong. It doesn't tell you that `GET /me` returned 401 four hundred milliseconds earlier, or that the request the screen was waiting on hadn't come back yet.
 
-> **Status: P3 iOS Simulator capture.** Fourteen MCP tools, working end to end against a real
-> booted simulator — start a capture and the Mac's system proxy is redirected and the
-> Interception Authority installed into the device for you, then page through traffic, drill
-> into one Exchange, slice a body, search with mitmproxy filter expressions, or block until the
-> request you're waiting for arrives. Run-scoped Timelines are P4. See [PLAN.md](./PLAN.md).
+> **Status: P4 Runs and Timelines.** Twenty MCP tools, working end to end against a real booted
+> simulator. Start a capture and the Mac's system proxy is redirected and the Interception
+> Authority installed into the device for you; page through traffic, drill into one Exchange,
+> slice a body, search with mitmproxy filter expressions, or block until the request you are
+> waiting for arrives. Then run your end-to-end test through `run_test` and ask `get_timeline`
+> why it failed. Hardening and packaging are P5. See [PLAN.md](./PLAN.md).
 
 ## Trying it
 
@@ -23,6 +24,25 @@ Point an MCP client at that command, then:
 2. Send traffic through it: `curl -x http://127.0.0.1:<port> --noproxy "" https://example.com`
 3. `list_exchanges()` to see it, `get_exchange(id)` for detail, `get_exchange_body(id, side)` for bytes.
 4. `stop_capture()`.
+
+Then the part the project exists for. Run a test and read the Timeline:
+
+```
+run_test(command="maestro test login.yaml")
+get_timeline()
+```
+
+Each Step reports what it **caused** and what was **already in flight** when it ran. That second
+one is usually the answer, and a failing Step says it in a sentence:
+
+```
+[failed] assertCondition: "Home" (17418ms)
+   => began while #46 GET api.example.com/auth (401) was still in flight
+```
+
+Maestro's output flags are set for you and pointed at the Run's own directory, so its Steps are
+found automatically. Any other test tool works too — wrap each action in `start_step` /
+`end_step` and you get the same Timeline with no adapter and no parsing.
 
 For a simulator, boot one first and then `start_capture(target="ios-simulator", udid="...")`.
 Pass `udid` whenever more than one simulator is booted — guessing would capture the wrong app's
@@ -50,6 +70,13 @@ harmless and expected. It also means a failed handshake can only be attributed t
 test when you set a `scope` naming its hosts, which is what `diagnose_capture` needs before it
 will report pinning.
 
+**Traffic is attributed by overlap, not assignment.** An Exchange is *owned* by the Step that was
+active when it started — that Step caused it — and every other Step it overlaps is recorded too. A
+flat one-Step-per-Exchange model would report either "the tap made a request" or "the assert made a
+request", and both lose the sentence that actually explains the failure. A request that never came
+back appears as `pending`, because the store records on completion and "still waiting" is a
+different answer from "finished". See [ADR-0004](./docs/adr/0004-overlap-attribution.md).
+
 **A listing cannot return a body.** Not by default — at all. `list_exchanges` has no parameter that would do it, so bodies need a second call and large ones need an offset. The failure mode for a traffic tool driven by an agent is flooding the context window, and the API is shaped to make that impossible rather than merely discouraged.
 
 ## Documentation
@@ -71,19 +98,21 @@ uv run pytest -m "not integration" # skip the tests that bind sockets and spawn 
 uv run ruff check .                # lint
 uv run ruff format .               # format
 
-# The one suite that changes your machine's networking. Creates and deletes its own
-# throwaway simulator; gated so it can never run by accident.
-HTTPS_PROXY_MCP_E2E=1 uv run pytest tests/test_simulator_e2e.py
+# The two suites that change your machine's networking. Each creates and deletes its own
+# throwaway simulator; gated so they can never run by accident.
+HTTPS_PROXY_MCP_E2E=1 uv run pytest tests/test_simulator_e2e.py tests/test_maestro_e2e.py
 ```
 
 Requires Python ≥ 3.12 (mitmproxy 12's floor); `uv` provides it.
 
 The `integration` tests are real: they bind ports, run `mitmdump` and `curl`, drive a server subprocess over stdio, and `kill -9` one to prove the system proxy comes back. The rest run in about two seconds.
 
-`tests/test_simulator_e2e.py` is the only file that touches your real network configuration, and it is gated behind an environment variable rather than a pytest marker — a command-line `-m` replaces any default marker expression, so `-m "not integration"` would otherwise have silently opted back in.
+`tests/test_simulator_e2e.py` and `tests/test_maestro_e2e.py` are the only files that touch your real network configuration, and both are gated behind an environment variable rather than a pytest marker — a command-line `-m` replaces any default marker expression, so `-m "not integration"` would otherwise have silently opted back in.
+
+`tests/test_pending_e2e.py` proves the in-flight path — a request that never answers — through a real proxy with `curl` and a socket that accepts and never replies. It needs no simulator and changes nothing, so it runs in the ordinary suite.
 
 ## Scope
 
-**v1:** iOS Simulator capture, read-only traffic access, Run-scoped timelines with Maestro as the first event source, and explicit steps for any other test tool.
+**v1:** iOS Simulator capture, read-only traffic access, Run-scoped Timelines with Maestro as the first Event Source, and explicit Steps for any other test tool.
 
 **Not v1:** Android Emulator, write/interception tools, physical devices, browsers. **Never:** production traffic monitoring.
