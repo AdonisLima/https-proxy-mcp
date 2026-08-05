@@ -20,7 +20,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from https_proxy_mcp.capture import Exchange, ExchangeStore
 from https_proxy_mcp.capture.runtime import ProxyRuntime
-from https_proxy_mcp.capture.session import DEFAULT_ROOT, Session, prune_sessions
+from https_proxy_mcp.capture.session import Session, default_root, prune_sessions
 from https_proxy_mcp.targets import CaptureTarget, build_target
 
 NOT_RECORDING = "not recording; call start_capture first"
@@ -43,7 +43,7 @@ class CaptureState:
         *,
         runtime_factory: Callable[..., Any] = ProxyRuntime,
     ) -> None:
-        self._root = Path(root) if root is not None else DEFAULT_ROOT
+        self._root = Path(root) if root is not None else default_root()
         self._runtime_factory = runtime_factory
         self._session: Session | None = None
         self._store: ExchangeStore | None = None

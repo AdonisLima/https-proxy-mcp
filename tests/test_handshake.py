@@ -4,9 +4,8 @@ The criterion from PLAN.md P0 — not that the object constructs, but that the p
 round-trips. It exercises the installed entry point, so broken ``[project.scripts]`` wiring
 fails here rather than in front of a user.
 
-Now also the thing that would catch the worst possible regression in this design: the proxy
-shares this process with the server, and stdio transport means one stray byte on stdout
-corrupts the framing. A handshake that still works is the proof.
+Since P2 it also pins the advertised tool surface, which is the contract a client sees before
+it calls anything.
 """
 
 import sys

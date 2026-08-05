@@ -10,9 +10,13 @@ guessed differently:
 
 * **Clearing the ``mode`` option is what closes the listener.** ``master.shutdown()`` stops
   the master but leaves the port bound, so a stop-then-start on the same port would fail.
-* **The proxy must be silent.** On stdio transport any stray byte on stdout corrupts MCP
-  framing, so termlog and dumper are both off — verified to emit nothing, including when a
-  connection fails.
+* **The proxy is kept silent, because it shares stdout with the protocol.** termlog and
+  dumper are both off, and were measured to emit nothing even when a connection fails.
+  Worth being precise about the risk: the MCP client parses stdout line by line and skips
+  lines it cannot parse, so a stray *whole* line is survivable. What is not survivable is a
+  write that interleaves inside a JSON-RPC line — the proxy and the transport hold separate
+  buffers on the same file descriptor, so under concurrency that is possible. Silence is the
+  cheap way never to find out, and no test can guard it: keep it that way on purpose.
 * **Port 0 works and reports back.** ``listen_addrs()`` gives the port actually bound, which
   is what lets a caller ask for "any free port" and still be told which one.
 """

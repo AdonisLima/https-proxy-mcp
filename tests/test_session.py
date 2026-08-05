@@ -7,13 +7,16 @@ lives here.
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
 from https_proxy_mcp.capture.session import (
     RETAINED_SESSIONS,
+    ROOT_ENV,
     SESSIONS_DIRNAME,
     Session,
+    default_root,
     prune_sessions,
     session_ids,
 )
@@ -192,3 +195,27 @@ def test_pruning_removes_the_whole_session_tree(tmp_path):
 
 def test_pruning_an_untouched_root_is_harmless(tmp_path):
     assert prune_sessions(tmp_path / "nothing-here", keep=10) == []
+
+
+# --- where Sessions live ------------------------------------------------------
+
+
+def test_the_root_defaults_under_the_home_directory(monkeypatch):
+    monkeypatch.delenv(ROOT_ENV, raising=False)
+
+    assert default_root() == Path.home() / ".https-proxy-mcp"
+
+
+def test_the_root_can_be_overridden_by_environment(monkeypatch, tmp_path):
+    """Captured bodies are unredacted, so being able to put them elsewhere matters."""
+    monkeypatch.setenv(ROOT_ENV, str(tmp_path / "elsewhere"))
+
+    assert default_root() == tmp_path / "elsewhere"
+
+
+def test_the_root_is_resolved_per_call_not_at_import(monkeypatch, tmp_path):
+    monkeypatch.setenv(ROOT_ENV, str(tmp_path / "first"))
+    first = default_root()
+    monkeypatch.setenv(ROOT_ENV, str(tmp_path / "second"))
+
+    assert (first, default_root()) == (tmp_path / "first", tmp_path / "second")

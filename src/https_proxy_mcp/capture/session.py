@@ -11,13 +11,26 @@ is a privacy feature as much as a disk one — an old Session is a pile of real 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-#: Where Sessions live unless told otherwise.
-DEFAULT_ROOT = Path.home() / ".https-proxy-mcp"
+#: Overrides where Sessions live. Set it to keep captured traffic — which is unredacted —
+#: somewhere other than the home directory, and so tests never write to a real one.
+ROOT_ENV = "HTTPS_PROXY_MCP_ROOT"
+
+
+def default_root() -> Path:
+    """Where Sessions live: ``$HTTPS_PROXY_MCP_ROOT``, else under the home directory.
+
+    Resolved per call rather than at import, so setting the variable takes effect for a
+    server started afterwards without depending on module import order.
+    """
+    override = os.environ.get(ROOT_ENV)
+    return Path(override) if override else Path.home() / ".https-proxy-mcp"
+
 
 SESSIONS_DIRNAME = "sessions"
 
