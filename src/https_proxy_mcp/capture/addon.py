@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from mitmproxy import http
 
-from https_proxy_mcp.capture.exchange import CapturedExchange
+from https_proxy_mcp.capture.exchange import CapturedExchange, PendingExchange
 from https_proxy_mcp.capture.store import ExchangeStore
 
 
@@ -35,13 +35,39 @@ class CaptureAddon:
 
     # --- mitmproxy hooks ------------------------------------------------------
 
+    def request(self, flow: http.HTTPFlow) -> None:
+        """The request has been read in full. Nothing is recorded yet — it is in flight.
+
+        This hook exists only so a Timeline can say "the assertion began while this request was
+        still outstanding". It opens a pending record and spends no Exchange id; the Exchange
+        itself is still created on completion, below.
+
+        ``flow.id`` is mitmproxy's own handle on the exchange and is stable across its hooks,
+        which is what lets completion find the record this opened.
+        """
+        self._store.open(
+            PendingExchange(
+                key=flow.id,
+                t_start=flow.request.timestamp_start,
+                method=flow.request.method,
+                url=flow.request.url,
+                host=flow.request.pretty_host,
+                path=flow.request.path,
+                scheme=flow.request.scheme,
+            )
+        )
+
     def response(self, flow: http.HTTPFlow) -> None:
         """A response arrived and the Exchange is complete."""
-        self._store.record(self._observe(flow))
+        self._store.record(self._observe(flow), pending_key=flow.id)
 
     def error(self, flow: http.HTTPFlow) -> None:
-        """The Exchange failed. Recorded with whatever is known, which is the request."""
-        self._store.record(self._observe(flow))
+        """The Exchange failed. Recorded with whatever is known, which is the request.
+
+        No longer in flight either way: it is now a recorded Exchange with no end. Leaving the
+        pending record behind would double-count it in every Timeline.
+        """
+        self._store.record(self._observe(flow), pending_key=flow.id)
 
     def tls_failed_client(self, data) -> None:
         """The client's TLS handshake failed, so no request will ever arrive.

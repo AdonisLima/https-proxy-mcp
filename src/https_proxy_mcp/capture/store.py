@@ -30,7 +30,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 
-from https_proxy_mcp.capture.exchange import BodyRef, CapturedExchange, Exchange
+from https_proxy_mcp.capture.exchange import (
+    BodyRef,
+    CapturedExchange,
+    Exchange,
+    PendingExchange,
+)
 
 #: Bodies land under this subdirectory of the Session directory, named by Exchange id.
 BODIES_DIRNAME = "bodies"
@@ -44,6 +49,11 @@ _SUFFIXES = {"request": "req", "response": "resp"}
 #: How many handshake failures are kept. Enough to tell "one host is pinned" from "nothing
 #: trusts the authority" without letting a pinned app that retries forever grow without bound.
 TLS_FAILURE_CAP = 50
+
+#: How many in-flight requests are tracked at once. Genuinely-open connections are bounded by the
+#: OS in practice, but a server that accepts and never answers — polled in a loop — would grow
+#: without one. Same reasoning as the handshake cap above.
+PENDING_CAP = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +98,9 @@ class ExchangeStore:
         self._evicted = 0
         self._tls_failures: list[TlsFailure] = []
         self._tls_failure_count = 0
+        # Insertion-ordered, so "oldest first" needs no sort and eviction is the first key.
+        self._pending: dict[str, PendingExchange] = {}
+        self._pending_dropped = 0
         self._closed = False
         self._dropped_after_close = 0
         self._log_path = self._dir / LOG_FILENAME
@@ -140,9 +153,51 @@ class ExchangeStore:
             del self._tls_failures[0]
 
     @property
+    def pending(self) -> tuple[PendingExchange, ...]:
+        """Requests read in full that have no response yet, oldest first.
+
+        Deliberately not part of :meth:`__iter__`. Every listing tool iterates the store, so
+        keeping these out of that iteration is what leaves ``list_exchanges``,
+        ``tail_exchanges``, ``search_exchanges`` and ``wait_for_exchanges`` untouched by P4.
+        """
+        return tuple(self._pending.values())
+
+    @property
+    def pending_dropped(self) -> int:
+        """Open requests the cap discarded. Counted, because a silent drop would make a Timeline
+        claim nothing was outstanding when something was."""
+        return self._pending_dropped
+
+    @property
     def recorded_count(self) -> int:
         """Every Exchange ever recorded in this Session, including evicted ones."""
         return self._recorded
+
+    # --- in-flight requests ---------------------------------------------------
+
+    def open(self, request: PendingExchange) -> None:
+        """Note a request that has been read in full but has no response yet.
+
+        Consumes **no** Exchange id. Ids are assigned on completion so that cursor-based tailing
+        means "what finished since I last looked"; spending one here would invert that ordering
+        and make ``wait_for_exchanges`` return before a status code existed.
+        """
+        if self._closed:
+            self._dropped_after_close += 1
+            return
+
+        self._pending[request.key] = request
+        while len(self._pending) > PENDING_CAP:
+            del self._pending[next(iter(self._pending))]
+            self._pending_dropped += 1
+
+    def _complete(self, key: str) -> None:
+        """Forget an open request, whether it succeeded or failed.
+
+        A key this store never saw is normal rather than exceptional: anything already in flight
+        when capture started delivers a response hook without a matching request hook.
+        """
+        self._pending.pop(key, None)
 
     @property
     def evicted_count(self) -> int:
@@ -151,8 +206,14 @@ class ExchangeStore:
 
     # --- recording ------------------------------------------------------------
 
-    def record(self, captured: CapturedExchange) -> Exchange | None:
+    def record(
+        self, captured: CapturedExchange, *, pending_key: str | None = None
+    ) -> Exchange | None:
         """Assign an id, spill both bodies, append to the log, and retain the metadata.
+
+        ``pending_key`` completes the matching in-flight record, if the caller opened one. It is
+        optional because most callers — every test, and anything replaying a log — have no such
+        record, and a required argument would let one of them empty the registry by accident.
 
         Ids are monotonic but ordered by *completion*, not by start: an Exchange is
         recorded once its response is in. So a slow request that started first can carry a
@@ -167,8 +228,14 @@ class ExchangeStore:
         exactly like a defect. Found during the P3 live run.
         """
         if self._closed:
+            # Left pending on purpose. The Exchange is not being recorded, so clearing the open
+            # record too would lose the request entirely — and "it was still open when the
+            # Session ended" is very nearly true and far more useful than silence.
             self._dropped_after_close += 1
             return None
+
+        if pending_key is not None:
+            self._complete(pending_key)
 
         self._recorded += 1
         exchange_id = self._recorded
