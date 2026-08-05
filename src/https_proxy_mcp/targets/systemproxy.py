@@ -23,7 +23,27 @@ Two ``networksetup`` behaviours shape the restore plan and are easy to get wrong
 
 from __future__ import annotations
 
+import atexit
+import contextlib
+import json
+import os
+import signal
+import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+
+#: The binaries this module drives. Absolute, because a redirected system proxy is not the
+#: place to discover that `PATH` was surprising.
+NETWORKSETUP = "/usr/sbin/networksetup"
+SCUTIL = "/usr/sbin/scutil"
+
+#: Sentinel filename, alongside ``sessions/`` under the root (SPEC.md, "Session directory").
+SENTINEL_NAME = "proxy-state.json"
+
+#: A command runner: takes an argv list, returns stdout. The seam that keeps every test in
+#: this module off the real machine. Production gets :func:`run_command`.
+CommandRunner = Callable[..., str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,3 +158,269 @@ class SystemProxyState:
             secure=ProxySetting(**data["secure"]),
             bypass=tuple(data["bypass"]),
         )
+
+
+def run_command(argv: list[str], *, stdin: str | None = None) -> str:
+    """Run a system command and return its stdout, failing with something readable.
+
+    ``CalledProcessError`` renders as an exit code and nothing else, which is useless when the
+    command that failed was the one meant to restore the machine's networking. The stderr text
+    is what says whether the service name was wrong or the operation was not permitted.
+    """
+    result = subprocess.run(
+        argv,
+        input=stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise OSError(
+            f"{' '.join(argv)} failed with exit {result.returncode}:"
+            f" {result.stderr.strip() or result.stdout.strip() or 'no output'}"
+        )
+    return result.stdout
+
+
+def resolve_primary_service(runner: CommandRunner = run_command) -> str:
+    """The name of the network service currently carrying the default route.
+
+    Deliberately *not* the first entry in ``-listnetworkserviceorder``. On the machine this
+    was developed on, service order ranks Thunderbolt Bridge first while the default route
+    goes out ``en0`` (Wi-Fi), so ordering would have redirected an interface carrying no
+    traffic and then reported success.
+
+    ``scutil`` names the primary service by UUID, and only the ``Setup:`` key carries the
+    human name that ``networksetup`` accepts, hence the two questions.
+    """
+    global_ipv4 = runner([SCUTIL], stdin="show State:/Network/Global/IPv4\n")
+    service_id = _scutil_value(global_ipv4, "PrimaryService")
+    if not service_id:
+        raise OSError(
+            "no primary network service: the machine appears to have no default route,"
+            " so there is nothing to redirect"
+        )
+
+    setup = runner([SCUTIL], stdin=f"show Setup:/Network/Service/{service_id}\n")
+    name = _scutil_value(setup, "UserDefinedName")
+    if not name:
+        raise OSError(f"primary network service {service_id} has no name to pass to networksetup")
+    return name
+
+
+def _scutil_value(output: str, key: str) -> str:
+    """One value out of scutil's dictionary rendering, which is not JSON and not a plist."""
+    for line in output.splitlines():
+        name, separator, value = line.partition(":")
+        if separator and name.strip() == key:
+            return value.strip()
+    return ""
+
+
+class SystemProxy:
+    """Redirects the machine's proxy settings, and guarantees they come back.
+
+    The guarantee is a file, not a handler. Handlers cover an orderly exit; only a file on disk
+    survives ``kill -9``, a panic or a power cut, which is why :meth:`repair` runs at every
+    server start and is the layer that actually does the work in the case that matters.
+
+    ``runner`` is a seam, not a backdoor: production always gets :func:`run_command`.
+    """
+
+    def __init__(
+        self,
+        sentinel_path: Path | str,
+        *,
+        runner: CommandRunner = run_command,
+        service: str | None = None,
+    ) -> None:
+        self._sentinel = Path(sentinel_path)
+        self._runner = runner
+        self._service = service
+        self._handlers_installed = False
+
+    @property
+    def sentinel_path(self) -> Path:
+        return self._sentinel
+
+    @property
+    def service(self) -> str:
+        """The service being redirected, resolved once and remembered."""
+        if self._service is None:
+            self._service = resolve_primary_service(self._runner)
+        return self._service
+
+    # --- reading --------------------------------------------------------------
+
+    def read_state(self, service: str | None = None) -> SystemProxyState:
+        """Every proxy field of ``service`` as it stands right now."""
+        target = service or self.service
+        return SystemProxyState(
+            service=target,
+            web=parse_proxy_setting(self._runner([NETWORKSETUP, "-getwebproxy", target])),
+            secure=parse_proxy_setting(
+                self._runner([NETWORKSETUP, "-getsecurewebproxy", target])
+            ),
+            bypass=parse_bypass_domains(
+                self._runner([NETWORKSETUP, "-getproxybypassdomains", target])
+            ),
+        )
+
+    # --- layer 1: record, then change -----------------------------------------
+
+    def redirect(self, host: str, port: int) -> SystemProxyState:
+        """Point the machine's HTTP and HTTPS proxies at ``host:port``.
+
+        Writes the prior state to the sentinel *first*. Doing it afterwards would leave a
+        window where the machine is proxied and nothing on disk says how to undo that — which
+        is precisely the window in which a crash is most likely, since the crash-prone work is
+        what follows.
+        """
+        if self._sentinel.exists():
+            raise RuntimeError(
+                f"a proxy sentinel already exists at {self._sentinel}, which means an earlier"
+                " capture died without restoring the system proxy. Overwriting it would record"
+                " the already-proxied state as the state to return to and lose the machine's"
+                " real configuration for good. Call repair() first."
+            )
+
+        prior = self.read_state()
+        self._write_sentinel(prior)
+
+        for flag in ("-setwebproxy", "-setsecurewebproxy"):
+            self._runner([NETWORKSETUP, flag, prior.service, host, str(port)])
+            self._runner([NETWORKSETUP, f"{flag}state", prior.service, "on"])
+        return prior
+
+    def _write_sentinel(self, state: SystemProxyState) -> None:
+        """Write the sentinel at ``0600``, flushed all the way to disk.
+
+        ``os.replace`` after an explicit fsync, so a crash mid-write cannot leave a truncated
+        sentinel — the one file whose corruption costs the machine's real configuration.
+        """
+        self._sentinel.parent.mkdir(parents=True, exist_ok=True)
+        scratch = self._sentinel.with_suffix(".partial")
+        with open(scratch, "w") as handle:
+            json.dump(state.to_dict(), handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        scratch.chmod(0o600)
+        os.replace(scratch, self._sentinel)
+
+    # --- restoring ------------------------------------------------------------
+
+    def restore(self) -> SystemProxyState | None:
+        """Put the recorded state back and remove the sentinel.
+
+        Returns what was restored, or ``None`` when there was nothing to restore. That case is
+        the common one rather than the edge one: ``CaptureState.start`` calls teardown on every
+        failure path, so this runs after starts that never redirected anything.
+        """
+        if not self._sentinel.exists():
+            return None
+
+        try:
+            recorded = SystemProxyState.from_dict(json.loads(self._sentinel.read_text()))
+        except (ValueError, KeyError, TypeError):
+            self._unproxy_after_losing_the_sentinel()
+            return None
+
+        for argv in recorded.restore_commands():
+            self._runner([NETWORKSETUP, *argv])
+        self._sentinel.unlink(missing_ok=True)
+        return recorded
+
+    def _unproxy_after_losing_the_sentinel(self) -> None:
+        """Fail safe when the sentinel cannot be read.
+
+        An unreadable sentinel still proves the machine was changed, and its prior state is
+        gone, so exact restoration is impossible. Turning both proxies off is the lesser
+        failure: the alternative leaves traffic pointed at a proxy that no longer exists, which
+        looks to the developer like the network is broken. The file is moved aside rather than
+        deleted so the evidence survives, and so the next start does not retry it forever.
+        """
+        service = self.service
+        for flag in ("-setwebproxystate", "-setsecurewebproxystate"):
+            self._runner([NETWORKSETUP, flag, service, "off"])
+        self._sentinel.replace(self._sentinel.with_suffix(".corrupt"))
+
+    # --- layer 3: repair on start ---------------------------------------------
+
+    def repair(self) -> SystemProxyState | None:
+        """Restore a sentinel left behind by a process that never got to clean up.
+
+        This is the layer that covers ``kill -9``. It is the same operation as :meth:`restore`;
+        the distinction is intent, and that the caller reports what it finds — a repaired
+        sentinel is the only visible evidence that an earlier run died.
+        """
+        return self.restore()
+
+    # --- layer 2: handlers ----------------------------------------------------
+
+    def install_handlers(self) -> None:
+        """Restore on any orderly exit: ``atexit``, ``SIGTERM`` and ``SIGINT``.
+
+        The previous handler is chained rather than replaced, and the default disposition is
+        re-raised after restoring, so installing this does not stop the process from dying the
+        way it was told to. Signal handlers can only be installed from the main thread; that is
+        where the MCP server runs, and a failure to install is reported rather than swallowed.
+        """
+        if self._handlers_installed:
+            return
+
+        atexit.register(self.restore_on_exit)
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous = signal.getsignal(signum)
+            signal.signal(signum, self._make_signal_handler(signum, previous))
+        self._handlers_installed = True
+
+    def _make_signal_handler(self, signum, previous):
+        def handler(received, frame):
+            self.restore_on_exit()
+            if callable(previous) and previous not in (signal.SIG_DFL, signal.SIG_IGN):
+                previous(received, frame)
+                return
+            # Re-raise with the default disposition so the exit status still says what killed
+            # the process, rather than turning every signal into a clean exit.
+            signal.signal(received, signal.SIG_DFL)
+            os.kill(os.getpid(), received)
+
+        return handler
+
+    def restore_on_exit(self) -> None:
+        """Restore, swallowing failures. The callback ``atexit`` and the handlers share.
+
+        An exception raised from ``atexit`` or from a signal handler replaces the real reason
+        the process is exiting with a traceback from teardown. Worse, it is not even a useful
+        one: if restoration failed the sentinel is still on disk, so the next start repairs it.
+        """
+        # Suppressed deliberately: the sentinel survives a failure here, so layer 3 covers it.
+        with contextlib.suppress(Exception):
+            self.restore()
+
+
+def sentinel_path(root: Path | str) -> Path:
+    """Where the sentinel lives for a given Session root."""
+    return Path(root) / SENTINEL_NAME
+
+
+def repair_system_proxy(root: Path | str, *, runner: CommandRunner = run_command) -> str | None:
+    """Layer 3, as the server calls it at start. Returns a line to report, or ``None``.
+
+    Called before anything else so a crashed predecessor cannot leave the machine proxied
+    through a port this process is about to bind for something else.
+    """
+    proxy = SystemProxy(sentinel_path(root), runner=runner)
+    if not proxy.sentinel_path.exists():
+        return None
+
+    restored = proxy.repair()
+    if restored is None:
+        return (
+            "an earlier capture died without restoring the system proxy, and its sentinel"
+            " could not be read; both proxies have been switched off to restore connectivity"
+        )
+    return (
+        f"an earlier capture died without restoring the system proxy;"
+        f" {restored.service} has been restored to its prior settings"
+    )
