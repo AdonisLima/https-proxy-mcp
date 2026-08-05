@@ -4,7 +4,10 @@ An MCP server that captures the HTTPS traffic of an app under test and interleav
 
 A failing assertion tells you the UI was wrong. It doesn't tell you that `GET /me` returned 401 four hundred milliseconds earlier, or that the request the screen was waiting on hadn't come back yet.
 
-> **Status: P0 scaffold.** The server builds and speaks MCP over stdio with no tools registered. See [PLAN.md](./PLAN.md) for what lands when.
+> **Status: P1 capture core.** Traffic through the proxy is recorded into a Session — bounded
+> metadata in memory, faithful bodies on disk, an append-only log — and secrets are redacted
+> to stable digests on the way out. No MCP tools are registered yet; that is P2. See
+> [PLAN.md](./PLAN.md) for what lands when.
 
 ## Documentation
 
@@ -18,10 +21,11 @@ A failing assertion tells you the UI was wrong. It doesn't tell you that `GET /m
 ## Development
 
 ```bash
-uv sync              # install dependencies
-uv run pytest        # run tests
-uv run ruff check .  # lint
-uv run ruff format . # format
+uv sync                            # install dependencies
+uv run pytest                      # run tests
+uv run pytest -m "not integration" # skip the tests that spawn mitmdump and curl
+uv run ruff check .                # lint
+uv run ruff format .               # format
 ```
 
 Requires Python ≥ 3.12 (mitmproxy 12's floor); `uv` provides it.
