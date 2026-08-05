@@ -118,6 +118,21 @@ class SystemProxyState:
     secure: ProxySetting
     bypass: tuple[str, ...]
 
+    @property
+    def server_summary(self) -> str:
+        """A short human rendering of what this state will be restored to.
+
+        Names the enabled flag as well as the address, because "configured but off" is the case
+        this whole module exists to preserve and a bare host:port would hide it.
+        """
+        if not self.web.configured and not self.secure.configured:
+            return "no proxy configured"
+        address = (
+            f"{self.web.server or self.secure.server}:{self.web.port or self.secure.port}"
+        )
+        enabled = self.web.enabled or self.secure.enabled
+        return f"{address} ({'enabled' if enabled else 'disabled'})"
+
     def restore_commands(self) -> list[list[str]]:
         """The ``networksetup`` argument lists that put this state back, in order.
 

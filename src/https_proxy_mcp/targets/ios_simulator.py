@@ -61,7 +61,6 @@ class IosSimulatorTarget:
         )
         self._confdir = self._root / CONFDIR_NAME
         self._device: SimulatorDevice | None = None
-        self._routed_port: int | None = None
 
     # --- lifecycle ------------------------------------------------------------
 
@@ -147,12 +146,10 @@ class IosSimulatorTarget:
         """
         self._proxy.redirect("127.0.0.1", port)
         self._proxy.install_handlers()
-        self._routed_port = port
 
     def teardown(self) -> None:
         """Put the system proxy back. Safe twice, and safe when nothing was ever changed."""
         self._proxy.restore()
-        self._routed_port = None
 
     # --- diagnosis ------------------------------------------------------------
 

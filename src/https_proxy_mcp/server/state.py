@@ -12,6 +12,7 @@ and an Exchange that was evicted says so rather than looking like one that never
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,12 @@ from https_proxy_mcp.capture.session import (
     prune_sessions,
 )
 from https_proxy_mcp.targets import CaptureObservations, CaptureTarget, build_target
-from https_proxy_mcp.targets.systemproxy import CommandRunner, run_command
+from https_proxy_mcp.targets.systemproxy import (
+    CommandRunner,
+    SystemProxyState,
+    run_command,
+    sentinel_path,
+)
 
 NOT_RECORDING = "not recording; call start_capture first"
 
@@ -299,8 +305,40 @@ class CaptureState:
             "exchanges": self._store.recorded_count,
             "retained": len(self._store),
             "evicted": self._store.evicted_count,
+            "tls_failures": self._store.tls_failure_count,
             "session_dir": str(self._session.dir),
             "trust": self._trust,
+            "proxy": self.proxy_state(),
+        }
+
+    def proxy_state(self) -> dict[str, Any]:
+        """Whether the machine's system proxy is currently redirected, and to what.
+
+        Read from the sentinel rather than from the target, because the sentinel is the thing that
+        outlives the process — this is the one piece of Session state that can survive a crash, so
+        "is my machine currently proxied?" should be answerable without reading a file by hand.
+        """
+        sentinel = sentinel_path(self._root)
+        if not sentinel.exists():
+            return {"redirected": False, "detail": "the system proxy is not redirected"}
+
+        try:
+            prior = SystemProxyState.from_dict(json.loads(sentinel.read_text()))
+        except (ValueError, KeyError, TypeError):
+            return {
+                "redirected": True,
+                "detail": f"redirected, but the sentinel at {sentinel} could not be read;"
+                " the next server start will switch the proxy off to restore connectivity",
+            }
+
+        return {
+            "redirected": True,
+            "service": prior.service,
+            "sentinel": str(sentinel),
+            "detail": (
+                f"{prior.service} is routed through the capture port; it will be restored to"
+                f" server={prior.server_summary} on stop_capture"
+            ),
         }
 
 

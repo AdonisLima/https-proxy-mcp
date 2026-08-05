@@ -413,3 +413,41 @@ async def test_a_scoped_capture_judges_pinning_on_the_hosts_it_was_given(server,
     assert result["status"] == "tls_failed"
     assert result["observed"]["tls_failures"] == 1
     assert result["observed"]["tls_failures_total"] == 2
+
+
+# --- get_status reports the proxy state ---------------------------------------
+
+
+async def test_status_reports_that_the_system_proxy_is_redirected(server, state, tmp_path):
+    """SPEC.md lists "proxy state" among what get_status returns, and it was the one field
+    missing. It matters more than the others here: a redirected system proxy is the part of a
+    Session that outlives the process, so "is my machine currently proxied?" deserves an answer
+    that does not require reading a sentinel file by hand."""
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
+
+    result = await call(server, "get_status")
+
+    assert result["proxy"]["redirected"] is True
+    assert result["proxy"]["service"] == "Wi-Fi"
+
+
+async def test_status_reports_no_redirection_for_a_target_that_arranges_none(server, state):
+    """The curl target routes nothing, so there is no system proxy to report."""
+    await state.start(target="curl", port=0, scope=None)
+
+    result = await call(server, "get_status")
+
+    assert result["proxy"]["redirected"] is False
+
+
+async def test_status_reports_the_tls_failure_counts(server, state, tmp_path):
+    """So an agent watching a capture can notice handshakes failing without having to call
+    diagnose_capture on a hunch."""
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
+    state.store.record_tls_failure("discord.com", "unrelated desktop app")
+
+    result = await call(server, "get_status")
+
+    assert result["tls_failures"] == 1
