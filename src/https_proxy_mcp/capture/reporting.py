@@ -2,7 +2,8 @@
 
 Capture is unconditional: everything through the proxy is recorded. Reporting is narrowed, in
 the order SPEC.md gives — the Run window first, then a builtin denylist of OS chatter, then an
-optional Scope. This module owns the last two; the Run window arrives in P4.
+optional Scope. All three live here, so a Timeline inherits them the same way a listing does
+rather than reimplementing the arithmetic next to the correlator.
 
 The reason narrowing exists at all is a property of the chosen capture path rather than a
 convenience. In regular proxy mode every connection arrives from localhost, so there is **no
@@ -81,19 +82,41 @@ def in_scope(host: str, scope: tuple[str, ...]) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class ReportingFilter:
-    """The narrowing applied to a listing: the Scope, and whether chatter is included."""
+    """The narrowing applied to a listing: the Run window, the Scope, and whether chatter is
+    included."""
 
     #: Hosts the agent is interested in. ``None`` means no Scope at all; an empty tuple is a
     #: Scope that names no hosts, and reports nothing. The two are genuinely different.
     scope: tuple[str, ...] | None = None
     #: Opt back in to the builtin denylist's traffic.
     include_denied: bool = False
+    #: The Run's interval as ``(start, end)`` epoch seconds, or ``None`` for no window at all.
+    #: An ``end`` of ``None`` is a Run still in progress, which reports everything since its start.
+    window: tuple[float, float | None] | None = None
 
     @property
     def narrows(self) -> bool:
         """Whether this filter can hide anything, which is what decides if a count is worth
         reporting to the caller."""
-        return self.scope is not None or not self.include_denied
+        return self.scope is not None or self.window is not None or not self.include_denied
+
+    def allows_time(self, exchange: Exchange) -> bool:
+        """Whether this Exchange happened during the Run.
+
+        Narrows by **intersection**, not by start time. A request already in flight when the Run
+        began is precisely the traffic a Timeline most wants — it overlaps the Run's first Steps,
+        and an assertion failing because of it is the case ADR-0004 exists for. Testing
+        ``t_start`` alone would throw it away.
+
+        An Exchange with no end never finished, so it cannot have finished before the window.
+        """
+        if self.window is None:
+            return True
+
+        start, end = self.window
+        if end is not None and exchange.t_start > end:
+            return False
+        return exchange.t_end is None or exchange.t_end >= start
 
     def allows_host(self, host: str) -> bool:
         """Whether traffic for ``host`` is reported at all.
@@ -112,8 +135,12 @@ class ReportingFilter:
         return not is_denied(host)
 
     def allows(self, exchange: Exchange) -> bool:
-        """Whether this Exchange is reported."""
-        return self.allows_host(exchange.host)
+        """Whether this Exchange is reported.
+
+        Window first, then host, in the order SPEC.md gives. Both must pass: the right host at
+        the wrong time is still somebody else's Run.
+        """
+        return self.allows_time(exchange) and self.allows_host(exchange.host)
 
     def apply(self, exchanges: list[Exchange]) -> tuple[list[Exchange], int]:
         """The Exchanges that are reported, and how many were hidden."""
