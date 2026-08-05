@@ -55,6 +55,41 @@ class BodyRef:
 
 
 @dataclass(frozen=True, slots=True)
+class PendingExchange:
+    """A request that has been read in full but has no response yet — still in flight.
+
+    Deliberately **not** an :class:`Exchange`. An Exchange carries an id, and ids are assigned on
+    completion so that cursor-based tailing means "what finished since I last looked". Handing an
+    id out here would invert that ordering and would make ``wait_for_exchanges`` return before a
+    status code existed, so *"tap Login, wait for POST /auth, check it returned 401"* — the thing
+    that makes end-to-end use practical — would stop working.
+
+    So this is a separate, parallel record. Nothing that lists Exchanges sees it; only a Timeline
+    does, where "the assertion began while this request was still outstanding" is the whole point.
+
+    Carries no bodies. The request body has been read, but a pending record exists to answer a
+    *timing* question, and keeping bodies here would duplicate the spill the store already does
+    on completion.
+    """
+
+    #: The addon's handle on the open request, so completion can find and clear it. Opaque to
+    #: everything but the addon — in practice mitmproxy's ``flow.id``.
+    key: str
+    #: Request start, epoch seconds. There is no end; that is what pending means.
+    t_start: float
+    method: str
+    url: str
+    host: str
+    path: str
+    scheme: str
+
+    @property
+    def label(self) -> str:
+        """How a Timeline names it, given there is no id to name it by."""
+        return f"{self.method} {self.host}{self.path}"
+
+
+@dataclass(frozen=True, slots=True)
 class CapturedExchange:
     """What the addon observed, before the store assigned an id or spilled the bodies.
 
