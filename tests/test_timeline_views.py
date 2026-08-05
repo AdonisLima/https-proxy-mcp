@@ -175,6 +175,31 @@ def test_background_traffic_is_counted_not_listed_in_the_summary(run):
     assert len(view["background"]["hosts"]) == 5
 
 
+def test_background_can_be_listed_without_asking_for_full_detail(run):
+    """`include_background` and `verbosity` do different jobs: one decides whether Background is
+    listed, the other how much detail each row carries."""
+    steps = [step(500, 100, "later")]
+    timeline = build_timeline(steps=steps, exchanges=[exch(1, 10, 20)], window=run.window)
+
+    view = timeline_view(timeline, run, include_background=True)
+
+    assert [item["id"] for item in view["background"]["exchanges"]] == [1]
+    # Still the compact row: no sizes.
+    assert "response_bytes" not in view["background"]["exchanges"][0]
+
+
+def test_full_detail_adds_body_sizes_but_never_bodies(run):
+    """A size explains a duration. The bytes stay behind an explicit get_exchange_body call."""
+    steps, _ = the_failing_case()
+    exchanges = [exch(7, 12, 912, request_size=120, response_size=2048)]
+    timeline = build_timeline(steps=steps, exchanges=exchanges, window=run.window)
+
+    row = timeline_view(timeline, run, verbosity="full")["steps"][0]["owned"][0]
+
+    assert row["request_bytes"] == 120
+    assert row["response_bytes"] == 2048
+
+
 def test_full_verbosity_lists_the_background_exchanges(run):
     steps = [step(500, 100, "later")]
     exchanges = [exch(1, 10, 20), exch(2, 30, 40)]

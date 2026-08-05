@@ -10,7 +10,6 @@ import pytest
 from https_proxy_mcp import build_server
 from https_proxy_mcp.server import SERVER_NAME
 
-#: Every tool P2 ships. Trust tools arrive in P3; Runs and Timelines in P4.
 #: Every tool the v1 read-only surface registers. Asserted exactly rather than by subset, so
 #: adding one is a deliberate act and removing one cannot pass unnoticed.
 REGISTERED_TOOLS = {
@@ -28,6 +27,13 @@ REGISTERED_TOOLS = {
     "tail_exchanges",
     "wait_for_exchanges",
     "export_curl",
+    # Runs and Timelines (P4).
+    "run_test",
+    "list_runs",
+    "get_timeline",
+    "start_step",
+    "end_step",
+    "export_har",
 }
 
 

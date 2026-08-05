@@ -28,6 +28,8 @@ from https_proxy_mcp.capture.session import (
     default_root,
     prune_sessions,
 )
+from https_proxy_mcp.eventsources.explicit import StepLog
+from https_proxy_mcp.runs.registry import Run, RunRegistry
 from https_proxy_mcp.targets import CaptureObservations, CaptureTarget, build_target
 from https_proxy_mcp.targets.systemproxy import (
     CommandRunner,
@@ -63,6 +65,10 @@ class CaptureState:
         self._runtime: Any | None = None
         self._target: CaptureTarget | None = None
         self._trust: dict[str, Any] | None = None
+        self._runs: RunRegistry | None = None
+        # Explicit marks belong to the Session rather than to a Run: a human marking Steps by hand
+        # has no Run at all, and a Run selects the marks inside its own window.
+        self._steps: StepLog | None = None
 
     # --- accessors ------------------------------------------------------------
 
@@ -81,6 +87,66 @@ class CaptureState:
     def scope(self) -> tuple[str, ...] | None:
         """The recording Session's Scope, or ``None`` when there is none."""
         return self._session.scope if self._session is not None else None
+
+    @property
+    def session(self) -> Session:
+        """The recording Session, or a message saying how to get one."""
+        if self._session is None:
+            raise ToolError(NOT_RECORDING)
+        return self._session
+
+    @property
+    def runs(self) -> RunRegistry:
+        """The Runs of the recording Session."""
+        if self._runs is None:
+            raise ToolError(NOT_RECORDING)
+        return self._runs
+
+    @property
+    def steps(self) -> StepLog:
+        """The explicit Steps marked during the recording Session."""
+        if self._steps is None:
+            raise ToolError(NOT_RECORDING)
+        return self._steps
+
+    def run_or_session(self, run_id: str | None, *, default_to_latest: bool = True) -> Run:
+        """The Run a tool was asked about, naming the alternatives when it does not exist.
+
+        What ``None`` means differs by tool, and deliberately so. A **Timeline** is about a Run, so
+        it defaults to the most recent one; an **export** is an artifact of everything captured, so
+        it defaults to the whole Session (SPEC.md). Collapsing the two would make one of them
+        surprising, and ``export_har`` silently exporting only the last few milliseconds of a Run
+        is the more expensive surprise.
+
+        With no Run started at all, both fall back to a stand-in covering the Session — which is
+        what lets an agent mark Steps by hand and never call ``run_test``.
+        """
+        registry = self.runs
+        if run_id is not None:
+            found = registry.get(run_id)
+            if found is None:
+                known = ", ".join(item.id for item in registry.all()) or "none yet"
+                raise ToolError(f"no Run {run_id!r} in this Session; Runs so far: {known}")
+            return found
+
+        if default_to_latest:
+            return registry.latest() or self._whole_session_run()
+        return self._whole_session_run()
+
+    def _whole_session_run(self) -> Run:
+        """A stand-in Run spanning the Session, for a Timeline asked for without one.
+
+        Not registered, and deliberately open-ended: its window starts when the Session did and
+        never closes, so everything captured is in scope.
+        """
+        session = self.session
+        return Run(
+            id="session",
+            dir=session.dir,
+            command=(),
+            t_start=session.started,
+            label=f"whole Session {session.id}",
+        )
 
     @property
     def root(self) -> Path:
@@ -173,13 +239,18 @@ class CaptureState:
             "observed": _observed_dict(observed),
         }
 
-    def reporting(self, *, include_denied: bool = False) -> ReportingFilter:
-        """How a listing narrows what it shows: the Session's Scope, plus the denylist.
+    def reporting(
+        self,
+        *,
+        include_denied: bool = False,
+        window: tuple[float, float | None] | None = None,
+    ) -> ReportingFilter:
+        """How a listing narrows what it shows: the Run window, the Session's Scope, the denylist.
 
-        Built per call rather than held, because ``include_denied`` is a per-call decision and a
-        cached filter would quietly ignore it.
+        Built per call rather than held, because ``include_denied`` and ``window`` are per-call
+        decisions and a cached filter would quietly ignore them.
         """
-        return ReportingFilter(scope=self.scope, include_denied=include_denied)
+        return ReportingFilter(scope=self.scope, include_denied=include_denied, window=window)
 
     def exchange(self, exchange_id: int) -> Exchange:
         """One Exchange, distinguishing "never existed" from "evicted"."""
@@ -245,6 +316,8 @@ class CaptureState:
         self._runtime = runtime
         self._target = capture_target
         self._trust = {"trusted": trust.trusted, "detail": trust.detail}
+        self._runs = RunRegistry(session.dir)
+        self._steps = StepLog()
 
         return {
             "recording": True,
@@ -266,6 +339,7 @@ class CaptureState:
         assert session is not None and store is not None
 
         recorded, evicted = store.recorded_count, store.evicted_count
+        runs = len(self._runs.all()) if self._runs is not None else 0
 
         # Routing stops first, so nothing is ever pointed at a proxy that is going away.
         if target is not None:
@@ -275,12 +349,14 @@ class CaptureState:
         store.close()
 
         self._session = self._store = self._runtime = self._target = self._trust = None
+        self._runs = self._steps = None
 
         return {
             "recording": False,
             "session": session.id,
             "exchanges": recorded,
             "evicted": evicted,
+            "runs": runs,
             "session_dir": str(session.dir),
         }
 
@@ -306,6 +382,11 @@ class CaptureState:
             "retained": len(self._store),
             "evicted": self._store.evicted_count,
             "tls_failures": self._store.tls_failure_count,
+            "pending": len(self._store.pending),
+            "runs": [item.id for item in self.runs.all()],
+            # Surfaced because a Step left open is a real and easily-forgotten mistake: every later
+            # Timeline shows it running, and nothing else would say why.
+            "open_step": self.steps.open_label,
             "session_dir": str(self._session.dir),
             "trust": self._trust,
             "proxy": self.proxy_state(),

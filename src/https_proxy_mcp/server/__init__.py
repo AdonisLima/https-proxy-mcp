@@ -1,8 +1,8 @@
 """MCP surface: server construction and tool registration.
 
 Tools are registered by ``register_*`` functions, one per group, each taking the
-server plus whatever it needs. P2 registers the Session lifecycle and the read-only
-Exchange tools; Runs and Timelines join in P4.
+server plus whatever it needs: the Session lifecycle, trust, the read-only Exchange
+tools, and Runs and Timelines.
 """
 
 import sys
@@ -13,6 +13,7 @@ from mcp.server.fastmcp import FastMCP
 
 from https_proxy_mcp.capture.session import default_root
 from https_proxy_mcp.server.exchange_tools import register_exchange_tools
+from https_proxy_mcp.server.run_tools import register_run_tools
 from https_proxy_mcp.server.session_tools import register_session_tools
 from https_proxy_mcp.server.state import CaptureState
 from https_proxy_mcp.server.trust_tools import register_trust_tools
@@ -52,6 +53,7 @@ def build_server(state: CaptureState | None = None) -> FastMCP:
     register_session_tools(server, capture_state)
     register_trust_tools(server, capture_state)
     register_exchange_tools(server, capture_state)
+    register_run_tools(server, capture_state)
     return server
 
 

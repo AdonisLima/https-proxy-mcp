@@ -34,17 +34,24 @@ def timeline_view(
     run: Run,
     *,
     verbosity: str = "summary",
+    include_background: bool = False,
     hidden: int = 0,
 ) -> dict[str, Any]:
     """A Run's Timeline, shaped for a model.
 
+    The two knobs do different jobs. ``verbosity`` controls how much detail each traffic row
+    carries; ``include_background`` decides whether Background traffic is *listed* as well as
+    counted. Background is never hidden either way — a Timeline that omits a connection reads as
+    "there was no traffic", which is the thing this project most wants not to say.
+
     ``hidden`` is how many Exchanges the narrowing removed. Reported always, because a Timeline
     assembles itself rather than going through ``_page`` and still owes its caller the count every
-    listing gives — a view that quietly drops rows reads as "there was no traffic".
+    listing gives.
     """
     if verbosity not in VERBOSITIES:
         raise ValueError(f"verbosity must be one of {', '.join(VERBOSITIES)}, not {verbosity!r}")
 
+    detailed = verbosity == "full"
     start, end = timeline.window
     return {
         "run": {
@@ -59,9 +66,11 @@ def timeline_view(
             "finished": run.finished,
         },
         "window": {"start": round(start, 3), "end": None if end is None else round(end, 3)},
-        "steps": [_step_view(item) for item in timeline.steps],
-        "background": _background_view(timeline.background, verbosity),
-        "pending": [_occurrence_view(item) for item in timeline.pending],
+        "steps": [_step_view(item, detailed) for item in timeline.steps],
+        "background": _background_view(
+            timeline.background, listed=include_background or detailed, detailed=detailed
+        ),
+        "pending": [_occurrence_view(item, detailed) for item in timeline.pending],
         "counts": {
             "steps": timeline.step_count,
             "exchanges": timeline.exchange_count,
@@ -72,7 +81,7 @@ def timeline_view(
     }
 
 
-def _step_view(attribution: StepAttribution) -> dict[str, Any]:
+def _step_view(attribution: StepAttribution, detailed: bool = False) -> dict[str, Any]:
     """One Step and the traffic around it."""
     step = attribution.step
     view: dict[str, Any] = {
@@ -84,9 +93,11 @@ def _step_view(attribution: StepAttribution) -> dict[str, Any]:
     if step.error is not None:
         view["error"] = step.error
     if attribution.owned:
-        view["owned"] = [_occurrence_view(item) for item in attribution.owned]
+        view["owned"] = [_occurrence_view(item, detailed) for item in attribution.owned]
     if attribution.overlapping:
-        view["overlapping"] = [_occurrence_view(item) for item in attribution.overlapping]
+        view["overlapping"] = [
+            _occurrence_view(item, detailed) for item in attribution.overlapping
+        ]
     if step.failed:
         view["explanation"] = _explain(attribution)
     return view
@@ -134,12 +145,14 @@ def _name(occurrence: Occurrence) -> str:
     return f"{identifier} {occurrence.label}{status}"
 
 
-def _background_view(background: tuple[Occurrence, ...], verbosity: str) -> dict[str, Any]:
-    """Background traffic: counted and named in a summary, listed in full.
+def _background_view(
+    background: tuple[Occurrence, ...], *, listed: bool, detailed: bool
+) -> dict[str, Any]:
+    """Background traffic: always counted and named, listed only when asked for.
 
-    Never omitted at either verbosity. Background is polling, telemetry and prefetching, and it is
-    reported separately rather than attributed or discarded (CONTEXT.md) — but a summary that lists
-    forty rows of it buries the Steps it is meant to frame.
+    Never omitted. Background is polling, telemetry and prefetching, reported separately rather
+    than attributed or discarded (CONTEXT.md) — but a default that lists forty rows of it buries
+    the Steps it is meant to frame.
     """
     hosts = list(dict.fromkeys(item.host for item in background))
     view: dict[str, Any] = {
@@ -148,12 +161,12 @@ def _background_view(background: tuple[Occurrence, ...], verbosity: str) -> dict
     }
     if len(hosts) > BACKGROUND_HOSTS_SHOWN:
         view["hosts_omitted"] = len(hosts) - BACKGROUND_HOSTS_SHOWN
-    if verbosity == "full":
-        view["exchanges"] = [_occurrence_view(item) for item in background]
+    if listed:
+        view["exchanges"] = [_occurrence_view(item, detailed) for item in background]
     return view
 
 
-def _occurrence_view(occurrence: Occurrence) -> dict[str, Any]:
+def _occurrence_view(occurrence: Occurrence, detailed: bool = False) -> dict[str, Any]:
     """One Exchange or open request as a Timeline row.
 
     ``id`` is ``None`` for a pending request, which is not an omission: ids are assigned on
@@ -168,6 +181,11 @@ def _occurrence_view(occurrence: Occurrence) -> dict[str, Any]:
         "path": occurrence.path,
         "status": occurrence.status_code,
     }
+    if detailed:
+        # Sizes, never bodies. "The response was two megabytes" explains a duration; the bytes
+        # themselves stay behind an explicit get_exchange_body call.
+        view["request_bytes"] = occurrence.request_bytes
+        view["response_bytes"] = occurrence.response_bytes
     # Flags only when true. Two false booleans on every row is a real cost at fifty rows.
     if occurrence.pending:
         view["pending"] = True

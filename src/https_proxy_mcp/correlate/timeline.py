@@ -69,6 +69,10 @@ class Occurrence:
     pending: bool = False
     long_lived: bool = False
     error: str | None = None
+    #: Body *sizes*, not bodies. "The response was two megabytes" is a timing explanation; the
+    #: bytes themselves are a separate, explicit call.
+    request_bytes: int = 0
+    response_bytes: int = 0
 
     @property
     def label(self) -> str:
@@ -104,6 +108,8 @@ class Occurrence:
             pending=False,
             long_lived=_is_long_lived(exchange),
             error=exchange.error,
+            request_bytes=exchange.request_body.size,
+            response_bytes=exchange.response_body.size,
         )
 
     @classmethod
