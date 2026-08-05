@@ -56,6 +56,7 @@ def register_exchange_tools(server: FastMCP, state: CaptureState) -> None:
         status: int | None = None,
         since: float | None = None,
         until: float | None = None,
+        include_denied: bool = False,
     ) -> dict[str, Any]:
         """List captured Exchanges, newest last, one compact row each.
 
@@ -63,11 +64,15 @@ def register_exchange_tools(server: FastMCP, state: CaptureState) -> None:
         or ``get_exchange_body`` for its bytes. Narrow with ``host`` (exact, case-insensitive),
         ``method``, ``status``, or the ``since``/``until`` epoch-second window. Page with
         ``cursor`` from the previous response; a ``next_cursor`` of null means that was the end.
+
+        OS chatter — Apple and iCloud domains, revocation checks, telemetry ingest — is left
+        out, as is anything outside the Session's Scope. ``hidden`` says how many rows that
+        removed; ``include_denied=true`` shows them. Capture itself is never narrowed.
         """
         matching = _narrow(
             list(state.store), host=host, method=method, status=status, since=since, until=until
         )
-        return _page(state, matching, limit=limit, cursor=cursor)
+        return _page(state, matching, limit=limit, cursor=cursor, include_denied=include_denied)
 
     @server.tool()
     def get_exchange(
@@ -128,6 +133,7 @@ def register_exchange_tools(server: FastMCP, state: CaptureState) -> None:
         filter: str,
         limit: int = DEFAULT_PAGE_SIZE,
         cursor: str | None = None,
+        include_denied: bool = False,
     ) -> dict[str, Any]:
         """Search Exchanges with a mitmproxy filter expression.
 
@@ -142,13 +148,21 @@ def register_exchange_tools(server: FastMCP, state: CaptureState) -> None:
         # would pay the parser cost thousands of times over.
         matches = _matcher(state, filter)
         matching = [item for item in state.store if matches(item)]
-        return _page(state, matching, limit=limit, cursor=cursor, filter=filter)
+        return _page(
+            state,
+            matching,
+            limit=limit,
+            cursor=cursor,
+            include_denied=include_denied,
+            filter=filter,
+        )
 
     @server.tool()
     def tail_exchanges(
         cursor: str | None = None,
         filter: str | None = None,
         limit: int = DEFAULT_PAGE_SIZE,
+        include_denied: bool = False,
     ) -> dict[str, Any]:
         """Everything captured since ``cursor``, for watching traffic as it happens.
 
@@ -156,16 +170,22 @@ def register_exchange_tools(server: FastMCP, state: CaptureState) -> None:
         traffic is expected, so an empty result hands back the cursor you gave it. Call again
         with it to pick up whatever arrived in between. To *block* until something specific
         shows up, use ``wait_for_exchanges`` instead of looping on this.
+
+        Narrowed by the denylist and the Session's Scope, like ``list_exchanges``.
         """
         after = _parse_cursor(cursor)
         matches = _matcher(state, filter or "")
         fresh = [item for item in state.store if item.id > after and matches(item)]
+        # Narrowed like every other listing, or the denylist would be defeated by reaching for
+        # the other browse tool.
+        fresh, hidden = state.reporting(include_denied=include_denied).apply(fresh)
         page = fresh[:limit]
         store = state.store
 
         return {
             "exchanges": [exchange_summary(item) for item in page],
             "returned": len(page),
+            "hidden": hidden,
             "next_cursor": str(page[-1].id) if page else cursor,
             "more_available": len(page) < len(fresh),
             "evicted": store.evicted_count,
@@ -273,11 +293,19 @@ def _page(
     *,
     limit: int,
     cursor: str | None,
+    include_denied: bool = False,
     **extra: Any,
 ) -> dict[str, Any]:
-    """One page of summaries, with the counts every listing owes its caller."""
+    """One page of summaries, with the counts every listing owes its caller.
+
+    Reporting is narrowed here rather than in each tool, so a new listing cannot forget to do
+    it — and ``hidden`` is always reported, because a listing that quietly removes rows reads
+    as "there was no traffic".
+    """
+    reported, hidden = state.reporting(include_denied=include_denied).apply(exchanges)
+
     try:
-        page, next_cursor = paginate(exchanges, limit=limit, cursor=cursor)
+        page, next_cursor = paginate(reported, limit=limit, cursor=cursor)
     except ValueError as exc:
         raise ToolError(str(exc)) from None
 
@@ -285,7 +313,8 @@ def _page(
     return {
         "exchanges": [exchange_summary(item) for item in page],
         "returned": len(page),
-        "matched": len(exchanges),
+        "matched": len(reported),
+        "hidden": hidden,
         "limit": min(limit, 200),
         "next_cursor": next_cursor,
         "evicted": store.evicted_count,

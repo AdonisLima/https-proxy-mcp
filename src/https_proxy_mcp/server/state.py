@@ -19,6 +19,7 @@ from typing import Any
 from mcp.server.fastmcp.exceptions import ToolError
 
 from https_proxy_mcp.capture import Exchange, ExchangeStore
+from https_proxy_mcp.capture.reporting import ReportingFilter
 from https_proxy_mcp.capture.runtime import ProxyRuntime
 from https_proxy_mcp.capture.session import (
     CONFDIR_NAME,
@@ -64,6 +65,19 @@ class CaptureState:
         if self._store is None:
             raise ToolError(NOT_RECORDING)
         return self._store
+
+    @property
+    def scope(self) -> tuple[str, ...] | None:
+        """The recording Session's Scope, or ``None`` when there is none."""
+        return self._session.scope if self._session is not None else None
+
+    def reporting(self, *, include_denied: bool = False) -> ReportingFilter:
+        """How a listing narrows what it shows: the Session's Scope, plus the denylist.
+
+        Built per call rather than held, because ``include_denied`` is a per-call decision and a
+        cached filter would quietly ignore it.
+        """
+        return ReportingFilter(scope=self.scope, include_denied=include_denied)
 
     def exchange(self, exchange_id: int) -> Exchange:
         """One Exchange, distinguishing "never existed" from "evicted"."""

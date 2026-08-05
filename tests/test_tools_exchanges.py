@@ -456,3 +456,111 @@ async def test_exporting_curl_can_be_made_runnable(server, recording):
     result = await call(server, "export_curl", exchange_id=1, include_secrets=True)
 
     assert TOKEN in result["command"]
+
+
+# --- reporting is narrowed by the denylist and the Scope -----------------------
+#
+# Capture stays unconditional; these tests are about what an agent is shown. The counts are
+# asserted as hard as the rows are: quietly dropping traffic would read as "there was none".
+
+
+async def test_os_chatter_is_left_out_of_a_listing(server, recording):
+    recording.store.record(captured(host="api.example.com"))
+    recording.store.record(captured(host="gs-loc.apple.com"))
+
+    result = await call(server, "list_exchanges")
+
+    assert [row["host"] for row in result["exchanges"]] == ["api.example.com"]
+
+
+async def test_a_listing_says_how_much_it_hid(server, recording):
+    """Silence here is the failure mode: an agent shown two rows out of four, with no note,
+    concludes it has seen everything."""
+    recording.store.record(captured(host="api.example.com"))
+    recording.store.record(captured(host="ocsp.digicert.com"))
+    recording.store.record(captured(host="configuration.apple.com"))
+
+    result = await call(server, "list_exchanges")
+
+    assert result["hidden"] == 2
+
+
+async def test_chatter_can_be_asked_for_explicitly(server, recording):
+    recording.store.record(captured(host="gs-loc.apple.com"))
+
+    result = await call(server, "list_exchanges", include_denied=True)
+
+    assert result["returned"] == 1
+    assert result["hidden"] == 0
+
+
+async def test_a_session_scope_narrows_a_listing(state):
+    """The Scope was already recorded in session.json and echoed by get_status; until now no
+    read tool consulted it (HANDOFF.md, "deliberately not built yet")."""
+    await state.start(target="curl", port=0, scope=["api.example.com"])
+    server = build_server(state=state)
+    state.store.record(captured(host="api.example.com"))
+    state.store.record(captured(host="cdn.example.com"))
+
+    result = await call(server, "list_exchanges")
+
+    assert [row["host"] for row in result["exchanges"]] == ["api.example.com"]
+    assert result["hidden"] == 1
+
+
+async def test_a_scope_beats_the_denylist(state):
+    """Naming a denied host explicitly is an instruction, not a mistake to correct."""
+    await state.start(target="curl", port=0, scope=["configuration.apple.com"])
+    server = build_server(state=state)
+    state.store.record(captured(host="configuration.apple.com"))
+
+    result = await call(server, "list_exchanges")
+
+    assert result["returned"] == 1
+
+
+async def test_a_search_is_narrowed_too(server, recording):
+    """Otherwise the denylist is trivially defeated by using the other listing tool."""
+    recording.store.record(captured(host="api.example.com"))
+    recording.store.record(captured(host="gs-loc.apple.com"))
+
+    result = await call(server, "search_exchanges", filter="~c 200")
+
+    assert [row["host"] for row in result["exchanges"]] == ["api.example.com"]
+
+
+async def test_a_tail_is_narrowed_too(server, recording):
+    recording.store.record(captured(host="api.example.com"))
+    recording.store.record(captured(host="ocsp.digicert.com"))
+
+    result = await call(server, "tail_exchanges")
+
+    assert [row["host"] for row in result["exchanges"]] == ["api.example.com"]
+
+
+async def test_waiting_is_not_narrowed(server, recording):
+    """Deliberately exempt. wait_for_exchanges is handed an explicit filter naming what to wait
+    for, so letting the denylist veto it would turn "wait for this request" into a timeout that
+    reports the request never happened — a lie, and a very expensive one to debug.
+    """
+    async def record_soon():
+        await asyncio.sleep(0.05)
+        recording.store.record(captured(host="configuration.apple.com"))
+
+    task = asyncio.create_task(record_soon())
+    result = await call(server, "wait_for_exchanges", filter="~d configuration.apple.com",
+                        timeout_ms=3000)
+    await task
+
+    assert result["timed_out"] is False
+    assert result["returned"] == 1
+
+
+async def test_fetching_one_exchange_by_id_is_not_narrowed(server, recording):
+    """An id came from somewhere, so refusing it would be obstruction rather than filtering —
+    and `hidden` in the listing is what tells an agent the traffic exists to ask about."""
+    recording.store.record(captured(host="gs-loc.apple.com"))
+
+    result = await call(server, "get_exchange", exchange_id=1)
+
+    assert result["host"] == "gs-loc.apple.com"
