@@ -218,3 +218,65 @@ def test_exchanges_are_numbered_in_completion_order(addon, store):
         addon.response(flow)
 
     assert [(e.id, e.path) for e in store] == [(1, "/one"), (2, "/two")]
+
+
+# --- TLS handshake failures ---------------------------------------------------
+#
+# These never become Exchanges — the handshake dies before there is a request — so without
+# this hook a pinned app and a silent app are indistinguishable, which is exactly the
+# confusion diagnose_capture exists to remove.
+
+
+def test_a_failed_client_handshake_is_counted(addon, store):
+    addon.tls_failed_client(_tls_failure())
+
+    assert store.tls_failure_count == 1
+
+
+def test_a_failed_handshake_records_the_host_that_failed(addon, store):
+    """Which host failed is the whole signal: one host failing while others succeed is
+    pinning, everything failing is an untrusted authority."""
+    addon.tls_failed_client(_tls_failure(sni="api.example.com"))
+
+    assert store.tls_failures[0].host == "api.example.com"
+
+
+def test_a_failed_handshake_records_the_reason(addon, store):
+    addon.tls_failed_client(_tls_failure(error="Client and server cipher mismatch"))
+
+    assert "cipher mismatch" in store.tls_failures[0].reason
+
+
+def test_a_handshake_failure_with_no_sni_is_still_recorded(addon, store):
+    """An app connecting by IP sends no SNI. Dropping those would hide the failure."""
+    addon.tls_failed_client(_tls_failure(sni=None))
+
+    assert store.tls_failure_count == 1
+    assert store.tls_failures[0].host is None
+
+
+def test_a_failed_handshake_is_not_an_exchange(addon, store):
+    """No request ever arrived, so recording one would invent traffic that never happened."""
+    addon.tls_failed_client(_tls_failure())
+
+    assert len(store) == 0
+    assert store.recorded_count == 0
+
+
+def _tls_failure(*, sni: str | None = "example.com", error: str = "unknown error"):
+    """A stand-in for mitmproxy's TlsData on the client-failure path.
+
+    tflow has no helper for this hook, and the addon reads only two fields off the
+    connection, so a real TlsData would add setup without adding coverage.
+    """
+
+    class _Connection:
+        def __init__(self) -> None:
+            self.sni = sni
+            self.error = error
+
+    class _TlsData:
+        def __init__(self) -> None:
+            self.conn = _Connection()
+
+    return _TlsData()

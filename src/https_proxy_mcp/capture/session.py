@@ -34,6 +34,11 @@ def default_root() -> Path:
 
 SESSIONS_DIRNAME = "sessions"
 
+#: Where mitmproxy keeps its Interception Authority. Shared across Sessions, so the authority a
+#: Capture Target was told to trust stays valid for the next one — regenerating it per Session
+#: would silently invalidate every device's trust store.
+CONFDIR_NAME = "mitmproxy"
+
 MANIFEST_FILENAME = "session.json"
 
 #: How many Sessions survive a prune (SPEC.md, "Session retention").

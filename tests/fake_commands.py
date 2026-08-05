@@ -76,7 +76,9 @@ class FakeCommands:
                 return PRIMARY_SERVICE_SETUP
             return self.responses.get(("scutil",), PRIMARY_IPV4)
 
-        for length in (2, 1):
+        # Longest prefix wins, so a test can answer `simctl list devices` without also having
+        # to answer every other `xcrun simctl` command.
+        for length in range(len(argv), 0, -1):
             key = tuple(argv[:length])
             if key in self.responses:
                 return self.responses[key]

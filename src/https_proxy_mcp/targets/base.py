@@ -38,6 +38,29 @@ class Diagnosis:
     remediation: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class CaptureObservations:
+    """What the core can see about arriving traffic, which a target cannot see for itself.
+
+    A target knows whether it arranged routing and trust; it has no idea whether anything came
+    through. Only the store knows that, so the counts are handed *to*
+    :meth:`CaptureTarget.diagnose` rather than discovered by it. Without them the two most
+    common outcomes — "nothing reached the proxy" and "traffic arrived but the Scope hid it" —
+    are indistinguishable.
+    """
+
+    #: Exchanges recorded this Session.
+    exchanges: int = 0
+    #: TLS handshakes that died before becoming an Exchange. Non-zero with a trusted authority
+    #: is the signature of certificate pinning.
+    tls_failures: int = 0
+    #: Hosts those handshakes were for, which is what separates one pinned host from a
+    #: wholesale trust failure.
+    tls_failure_hosts: tuple[str, ...] = ()
+    #: How many Exchanges survive the Scope and the denylist. ``None`` when nothing narrows.
+    reported: int | None = None
+
+
 @runtime_checkable
 class CaptureTarget(Protocol):
     """What the core needs from anything whose traffic it captures."""
@@ -51,8 +74,13 @@ class CaptureTarget(Protocol):
     def route_traffic(self, port: int) -> None:
         """Send the target's egress through the proxy on ``port``."""
 
-    def diagnose(self) -> Diagnosis:
-        """Explain why capture is or is not working."""
+    def diagnose(self, observed: CaptureObservations | None = None) -> Diagnosis:
+        """Explain why capture is or is not working.
+
+        ``observed`` carries the counts only the store knows. Optional so a target can be asked
+        what it thinks before a Session exists, but a target that ignores it cannot distinguish
+        "nothing arrived" from "the Scope hid it".
+        """
 
     def teardown(self) -> None:
         """Undo :meth:`route_traffic`. Must be safe to call twice, and safe to call after a

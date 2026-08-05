@@ -13,13 +13,20 @@ that needs repairing, which is the reason this file has no teardown logic to spe
 
 from __future__ import annotations
 
-from https_proxy_mcp.targets.base import Diagnosis, TrustStatus
+from https_proxy_mcp.targets.base import CaptureObservations, Diagnosis, TrustStatus
 
 
 class CurlTarget:
     """A Capture Target that arranges nothing, because `curl` is told where to go."""
 
     name = "curl"
+
+    def __init__(self, **_options: object) -> None:
+        """Accepts and ignores the options other targets need.
+
+        Every target is built through one registry call, so they share a constructor shape.
+        This one has nothing to configure: there is no device to name and no confdir to read.
+        """
 
     def prepare(self) -> None:
         """Nothing to prepare."""
@@ -41,12 +48,13 @@ class CurlTarget:
     def route_traffic(self, port: int) -> None:
         """Nothing to route: the caller passes ``-x http://127.0.0.1:<port>`` itself."""
 
-    def diagnose(self) -> Diagnosis:
+    def diagnose(self, observed: CaptureObservations | None = None) -> Diagnosis:
         """Report ok, and be honest that this target observes nothing.
 
         A target cannot see whether the caller actually passed ``-x``. Saying "ok" here means
         "nothing is misconfigured on my side", not "traffic is definitely arriving" — the
-        Exchange count in ``get_status`` is what answers that.
+        Exchange count in ``get_status`` is what answers that. ``observed`` is accepted and
+        unused: there is no configuration on this side for it to reflect on.
         """
         return Diagnosis(
             status="ok",

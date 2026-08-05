@@ -24,7 +24,9 @@ own thread needs a lock added here, deliberately.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 
@@ -38,6 +40,25 @@ LOG_FILENAME = "exchanges.ndjson"
 
 #: Suffix per side of an Exchange.
 _SUFFIXES = {"request": "req", "response": "resp"}
+
+#: How many handshake failures are kept. Enough to tell "one host is pinned" from "nothing
+#: trusts the authority" without letting a pinned app that retries forever grow without bound.
+TLS_FAILURE_CAP = 50
+
+
+@dataclass(frozen=True, slots=True)
+class TlsFailure:
+    """A TLS handshake that died before there was ever a request to record.
+
+    Kept separately from Exchanges because it is not one: no request arrived, so recording it
+    as an Exchange would invent traffic. But it is the difference between "the app is pinned"
+    and "the app is silent", which is the distinction ``diagnose_capture`` exists to draw.
+    """
+
+    t: float
+    #: The requested host, from SNI. ``None`` when the client connected by IP and sent none.
+    host: str | None
+    reason: str
 
 
 class ExchangeStore:
@@ -65,6 +86,8 @@ class ExchangeStore:
         self._retained: dict[int, Exchange] = {}
         self._recorded = 0
         self._evicted = 0
+        self._tls_failures: list[TlsFailure] = []
+        self._tls_failure_count = 0
         self._log_path = self._dir / LOG_FILENAME
         self._log = self._log_path.open("a", encoding="utf-8")
 
@@ -78,6 +101,27 @@ class ExchangeStore:
     @property
     def log_path(self) -> Path:
         return self._log_path
+
+    @property
+    def tls_failure_count(self) -> int:
+        """Every handshake failure seen, including any beyond what is still retained."""
+        return self._tls_failure_count
+
+    @property
+    def tls_failures(self) -> list[TlsFailure]:
+        """The most recent handshake failures, oldest first."""
+        return list(self._tls_failures)
+
+    def record_tls_failure(self, host: str | None, reason: str) -> None:
+        """Note a handshake that never became an Exchange.
+
+        Capped rather than unbounded: a pinned app typically retries in a tight loop, and the
+        hundredth identical failure carries no information the first did not.
+        """
+        self._tls_failure_count += 1
+        self._tls_failures.append(TlsFailure(t=time.time(), host=host, reason=reason))
+        if len(self._tls_failures) > TLS_FAILURE_CAP:
+            del self._tls_failures[0]
 
     @property
     def recorded_count(self) -> int:

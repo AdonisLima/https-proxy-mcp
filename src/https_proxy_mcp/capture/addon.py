@@ -43,6 +43,22 @@ class CaptureAddon:
         """The Exchange failed. Recorded with whatever is known, which is the request."""
         self._store.record(self._observe(flow))
 
+    def tls_failed_client(self, data) -> None:
+        """The client's TLS handshake failed, so no request will ever arrive.
+
+        Counted rather than recorded as an Exchange: nothing was requested. Without this hook a
+        pinned app and an idle app look identical — both produce zero Exchanges — and telling
+        them apart is the single most valuable thing ``diagnose_capture`` does.
+
+        The host comes from SNI, which is absent when a client connects by IP. That is recorded
+        as ``None`` rather than dropped, because a failure with no name is still a failure.
+        """
+        connection = data.conn
+        self._store.record_tls_failure(
+            host=getattr(connection, "sni", None),
+            reason=getattr(connection, "error", None) or "TLS handshake failed",
+        )
+
     # --- translation ----------------------------------------------------------
 
     def _observe(self, flow: http.HTTPFlow) -> CapturedExchange:

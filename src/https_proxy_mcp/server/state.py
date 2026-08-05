@@ -20,14 +20,15 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from https_proxy_mcp.capture import Exchange, ExchangeStore
 from https_proxy_mcp.capture.runtime import ProxyRuntime
-from https_proxy_mcp.capture.session import Session, default_root, prune_sessions
+from https_proxy_mcp.capture.session import (
+    CONFDIR_NAME,
+    Session,
+    default_root,
+    prune_sessions,
+)
 from https_proxy_mcp.targets import CaptureTarget, build_target
 
 NOT_RECORDING = "not recording; call start_capture first"
-
-#: Where mitmproxy keeps its Interception Authority, shared across Sessions so the authority
-#: a Capture Target was told to trust stays valid for the next one.
-CONFDIR_NAME = "mitmproxy"
 
 
 class CaptureState:
