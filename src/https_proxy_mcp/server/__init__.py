@@ -5,12 +5,18 @@ server plus whatever it needs. P2 registers the Session lifecycle and the read-o
 Exchange tools; Runs and Timelines join in P4.
 """
 
+import sys
+from pathlib import Path
+from typing import Any
+
 from mcp.server.fastmcp import FastMCP
 
+from https_proxy_mcp.capture.session import default_root
 from https_proxy_mcp.server.exchange_tools import register_exchange_tools
 from https_proxy_mcp.server.session_tools import register_session_tools
 from https_proxy_mcp.server.state import CaptureState
 from https_proxy_mcp.server.trust_tools import register_trust_tools
+from https_proxy_mcp.targets.systemproxy import repair_system_proxy, run_command
 
 SERVER_NAME = "https-proxy-mcp"
 
@@ -49,6 +55,29 @@ def build_server(state: CaptureState | None = None) -> FastMCP:
     return server
 
 
+def repair_before_serving(
+    root: Path | str | None = None,
+    *,
+    runner: Any = run_command,
+) -> str | None:
+    """Layer 3 of the teardown guarantee: restore a sentinel a dead predecessor left behind.
+
+    Runs before the server does anything else, which is what makes ``kill -9`` survivable —
+    handlers cover an orderly exit and nothing else. Two consequences of running it *first*:
+    the machine's networking is fixed even if this start then fails for an unrelated reason, and
+    ``route_traffic`` can safely refuse to overwrite a sentinel it finds, because by then any
+    sentinel present really does belong to this process.
+
+    Reported on **stderr**. stdout is the MCP transport, and while a stray line there turns out
+    not to corrupt framing, an interleaved write inside a JSON-RPC line would.
+    """
+    message = repair_system_proxy(root if root is not None else default_root(), runner=runner)
+    if message is not None:
+        print(f"https-proxy-mcp: {message}", file=sys.stderr, flush=True)
+    return message
+
+
 def main() -> None:
     """Entry point for the ``https-proxy-mcp`` script. Serves over stdio."""
+    repair_before_serving()
     build_server().run(transport="stdio")
