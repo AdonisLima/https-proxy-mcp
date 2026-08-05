@@ -1,0 +1,252 @@
+"""Unit tests for the ExchangeStore: ids, ring-buffer eviction, body spill, NDJSON log.
+
+The store is the durability layer and it is deliberately *not* a redaction boundary — the
+Session directory holds faithful bodies so that "is my app sending the right token?" stays
+answerable (SPEC.md). The NDJSON assertions below pin that down, because it is the kind of
+thing a later well-meaning change would quietly break.
+"""
+
+import json
+
+import pytest
+
+from https_proxy_mcp.capture import CapturedExchange, Exchange, ExchangeStore
+
+TOKEN = "Bearer s3cret-token"
+
+
+def captured(**overrides) -> CapturedExchange:
+    """A complete CapturedExchange, so each test overrides only what it is about."""
+    fields = {
+        "t_start": 1000.0,
+        "t_end": 1000.25,
+        "method": "GET",
+        "url": "http://api.example.com/me",
+        "host": "api.example.com",
+        "path": "/me",
+        "scheme": "http",
+        "http_version": "HTTP/1.1",
+        "status_code": 200,
+        "request_headers": [("Authorization", TOKEN)],
+        "response_headers": [("Content-Type", "application/json")],
+        "request_body": b"",
+        "response_body": b'{"id":1}',
+        "server_address": "93.184.216.34:80",
+        "error": None,
+    }
+    return CapturedExchange(**(fields | overrides))
+
+
+@pytest.fixture
+def store(tmp_path):
+    with ExchangeStore(tmp_path / "session") as store:
+        yield store
+
+
+# --- identity -----------------------------------------------------------------
+
+
+def test_ids_start_at_one_and_increase_monotonically(store):
+    ids = [store.record(captured()).id for _ in range(3)]
+
+    assert ids == [1, 2, 3]
+
+
+def test_a_recorded_exchange_is_retrievable_by_id(store):
+    recorded = store.record(captured(path="/orders"))
+
+    assert store.get(recorded.id).path == "/orders"
+
+
+def test_an_unknown_id_returns_none(store):
+    assert store.get(999) is None
+
+
+def test_duration_is_derived_from_the_interval(store):
+    assert store.record(captured(t_start=10.0, t_end=10.25)).duration_ms == 250.0
+
+
+def test_an_exchange_with_no_response_has_no_duration(store):
+    """An errored Exchange has a start but no end; duration must not be invented."""
+    assert store.record(captured(t_end=None, status_code=None)).duration_ms is None
+
+
+# --- ring buffer --------------------------------------------------------------
+
+
+def test_the_buffer_defaults_to_five_thousand():
+    assert ExchangeStore.DEFAULT_CAPACITY == 5000
+
+
+def test_the_buffer_retains_only_up_to_capacity(tmp_path):
+    with ExchangeStore(tmp_path / "s", capacity=3) as store:
+        for _ in range(5):
+            store.record(captured())
+
+        assert len(store) == 3
+
+
+def test_the_oldest_exchanges_are_the_ones_evicted(tmp_path):
+    with ExchangeStore(tmp_path / "s", capacity=3) as store:
+        for _ in range(5):
+            store.record(captured())
+
+        assert [e.id for e in store] == [3, 4, 5]
+
+
+def test_an_evicted_exchange_is_no_longer_retrievable(tmp_path):
+    with ExchangeStore(tmp_path / "s", capacity=2) as store:
+        first = store.record(captured())
+        store.record(captured())
+        store.record(captured())
+
+        assert store.get(first.id) is None
+
+
+def test_evictions_are_counted(tmp_path):
+    """The count is always reported, so an agent can tell "no more" from "lost"."""
+    with ExchangeStore(tmp_path / "s", capacity=2) as store:
+        for _ in range(5):
+            store.record(captured())
+
+        assert store.evicted_count == 3
+
+
+def test_nothing_is_evicted_below_capacity(tmp_path):
+    with ExchangeStore(tmp_path / "s", capacity=10) as store:
+        store.record(captured())
+
+        assert store.evicted_count == 0
+
+
+def test_the_total_recorded_count_survives_eviction(tmp_path):
+    with ExchangeStore(tmp_path / "s", capacity=2) as store:
+        for _ in range(5):
+            store.record(captured())
+
+        assert store.recorded_count == 5
+
+
+# --- body spill ---------------------------------------------------------------
+
+
+def test_a_response_body_is_spilled_faithfully(store):
+    recorded = store.record(captured(response_body=b'{"secret":"kept"}'))
+
+    assert (store.dir / recorded.response_body.path).read_bytes() == b'{"secret":"kept"}'
+
+
+def test_a_request_body_is_spilled_faithfully(store):
+    recorded = store.record(captured(request_body=b"grant_type=password"))
+
+    assert (store.dir / recorded.request_body.path).read_bytes() == b"grant_type=password"
+
+
+def test_the_two_sides_spill_to_distinct_paths(store):
+    recorded = store.record(captured(request_body=b"req", response_body=b"resp"))
+
+    assert recorded.request_body.path == "bodies/1.req"
+    assert recorded.response_body.path == "bodies/1.resp"
+
+
+def test_body_paths_are_relative_so_a_session_stays_movable(store):
+    recorded = store.record(captured(request_body=b"req"))
+
+    assert not recorded.request_body.path.startswith("/")
+
+
+def test_an_empty_body_spills_no_file(store):
+    recorded = store.record(captured(request_body=b""))
+
+    assert recorded.request_body.path is None
+    assert recorded.request_body.size == 0
+    assert list((store.dir / "bodies").glob("*.req")) == []
+
+
+def test_the_body_cap_defaults_to_ten_megabytes():
+    assert ExchangeStore.DEFAULT_BODY_CAP_BYTES == 10 * 1024 * 1024
+
+
+def test_a_body_beyond_the_cap_is_truncated_on_disk(tmp_path):
+    with ExchangeStore(tmp_path / "s", body_cap_bytes=8) as store:
+        recorded = store.record(captured(response_body=b"0123456789"))
+
+        assert (store.dir / recorded.response_body.path).read_bytes() == b"01234567"
+
+
+def test_a_truncated_body_is_marked_and_reports_its_true_size(tmp_path):
+    with ExchangeStore(tmp_path / "s", body_cap_bytes=8) as store:
+        body = store.record(captured(response_body=b"0123456789")).response_body
+
+        assert body.truncated is True
+        assert body.size == 10
+        assert body.stored_bytes == 8
+
+
+def test_a_body_within_the_cap_is_not_marked_truncated(tmp_path):
+    with ExchangeStore(tmp_path / "s", body_cap_bytes=8) as store:
+        assert store.record(captured(response_body=b"12345678")).response_body.truncated is False
+
+
+# --- the NDJSON log -----------------------------------------------------------
+
+
+def test_one_line_is_appended_per_exchange(store):
+    for _ in range(3):
+        store.record(captured())
+
+    assert len(store.log_path.read_text().splitlines()) == 3
+
+
+def test_each_line_round_trips_back_to_the_recorded_exchange(store):
+    recorded = store.record(captured(request_body=b"req", response_body=b"resp"))
+
+    line = json.loads(store.log_path.read_text().splitlines()[0])
+
+    assert Exchange.from_log_dict(line) == recorded
+
+
+def test_the_log_keeps_exchanges_the_buffer_has_evicted(tmp_path):
+    """Durability is the log's job; the buffer only bounds memory."""
+    with ExchangeStore(tmp_path / "s", capacity=2) as store:
+        for _ in range(5):
+            store.record(captured())
+
+        assert len(store.log_path.read_text().splitlines()) == 5
+        assert len(store) == 2
+
+
+def test_the_log_holds_faithful_unredacted_headers(store):
+    """The store is not a redaction boundary. Serialization is where secrets stop."""
+    store.record(captured())
+
+    line = json.loads(store.log_path.read_text().splitlines()[0])
+
+    assert [tuple(h) for h in line["request_headers"]] == [("Authorization", TOKEN)]
+
+
+def test_an_errored_exchange_records_its_error(store):
+    store.record(captured(t_end=None, status_code=None, error="connection refused"))
+
+    line = json.loads(store.log_path.read_text().splitlines()[0])
+
+    assert line["error"] == "connection refused"
+    assert line["status_code"] is None
+
+
+# --- the session directory ----------------------------------------------------
+
+
+def test_the_session_and_bodies_directories_are_created(store):
+    assert store.dir.is_dir()
+    assert (store.dir / "bodies").is_dir()
+
+
+def test_the_session_directory_is_private(store):
+    """It holds unredacted secrets, so it is 0700 (SPEC.md, "Session directory")."""
+    assert store.dir.stat().st_mode & 0o777 == 0o700
+
+
+def test_a_nested_session_path_is_created(tmp_path):
+    with ExchangeStore(tmp_path / "sessions" / "abc") as store:
+        assert store.dir.is_dir()
