@@ -107,16 +107,37 @@ class CaptureState:
             return CaptureObservations()
 
         store = self._store
-        reported, _ = self.reporting().apply(list(store))
-        failures = store.tls_failures
+        reporting = self.reporting()
+        reported, _ = reporting.apply(list(store))
+
+        # A handshake failure is only evidence about the app under test when a Scope says which
+        # hosts that is. Redirecting the system proxy redirects the whole machine, and the
+        # authority is installed into the simulator's trust store alone, so every other
+        # application on the developer's Mac fails against the proxy — the live P3 run produced
+        # discord.com, figma.com and unleash.codeium.com, none of them remotely related to the
+        # capture. In regular proxy mode they are indistinguishable from the app (ADR-0002), and
+        # no denylist can help: it would have to enumerate every app a developer might run.
+        #
+        # So without a Scope there is no attributable evidence, and claiming pinning would fire on
+        # a capture that is working perfectly. Failures with no SNI are excluded for the same
+        # reason — a failure that cannot be tied to a host cannot be tied to the app either.
+        relevant = (
+            [
+                failure
+                for failure in store.tls_failures
+                if failure.host and reporting.allows_host(failure.host)
+            ]
+            if self.scope is not None
+            else []
+        )
+
         return CaptureObservations(
             exchanges=store.recorded_count,
-            tls_failures=store.tls_failure_count,
+            tls_failures=len(relevant),
+            tls_failures_total=store.tls_failure_count,
             # Deduplicated, order preserved: a pinned app retries, and the same host repeated
             # forty times says nothing the first did not.
-            tls_failure_hosts=tuple(
-                dict.fromkeys(failure.host for failure in failures if failure.host)
-            ),
+            tls_failure_hosts=tuple(dict.fromkeys(failure.host for failure in relevant)),
             reported=len(reported),
         )
 
@@ -288,6 +309,9 @@ def _observed_dict(observed: CaptureObservations) -> dict[str, Any]:
     return {
         "exchanges": observed.exchanges,
         "reported": observed.reported,
+        # Narrowed, and the raw total alongside it: filtering the verdict must not hide that
+        # handshakes are failing somewhere.
         "tls_failures": observed.tls_failures,
+        "tls_failures_total": observed.tls_failures_total,
         "tls_failure_hosts": list(observed.tls_failure_hosts),
     }

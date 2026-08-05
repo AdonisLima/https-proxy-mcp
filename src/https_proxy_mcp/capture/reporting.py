@@ -95,18 +95,25 @@ class ReportingFilter:
         reporting to the caller."""
         return self.scope is not None or not self.include_denied
 
-    def allows(self, exchange: Exchange) -> bool:
-        """Whether this Exchange is reported.
+    def allows_host(self, host: str) -> bool:
+        """Whether traffic for ``host`` is reported at all.
+
+        Separate from :meth:`allows` because it is also what decides which *TLS handshake
+        failures* count — those never become Exchanges, so there is no Exchange to ask about.
 
         A Scope beats the denylist: if the agent named a host explicitly, hiding it would be the
         tool second-guessing an instruction, and the denylist's guess is far weaker than the
         agent's statement.
         """
         if self.scope is not None:
-            return in_scope(exchange.host, self.scope)
+            return in_scope(host, self.scope)
         if self.include_denied:
             return True
-        return not is_denied(exchange.host)
+        return not is_denied(host)
+
+    def allows(self, exchange: Exchange) -> bool:
+        """Whether this Exchange is reported."""
+        return self.allows_host(exchange.host)
 
     def apply(self, exchanges: list[Exchange]) -> tuple[list[Exchange], int]:
         """The Exchanges that are reported, and how many were hidden."""

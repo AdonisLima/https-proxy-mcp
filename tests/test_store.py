@@ -296,3 +296,52 @@ def test_the_session_directory_is_private(store):
 def test_a_nested_session_path_is_created(tmp_path):
     with ExchangeStore(tmp_path / "sessions" / "abc") as store:
         assert store.dir.is_dir()
+
+
+# --- a late arrival after close -----------------------------------------------
+#
+# Found by the P3 live run. Connections still in flight when stop_capture runs deliver their
+# error hook *after* the store is closed, and mitmproxy logs "Addon error: I/O operation on
+# closed file". Nothing is lost that matters — the Session is over — but an exception thrown
+# from an addon hook during shutdown is noise that looks like a defect, and on a busy capture
+# it is one line per open connection.
+
+
+def test_recording_after_close_is_ignored_rather_than_raising(tmp_path):
+    """CaptureState.stop closes the store while the proxy may still be unwinding, so a late
+    record is a normal part of shutdown, not a programming error."""
+    store = ExchangeStore(tmp_path / "session")
+    store.close()
+
+    store.record(captured())
+
+    assert store.recorded_count == 0
+
+
+def test_late_arrivals_after_close_are_counted(tmp_path):
+    """Counted rather than silent: "capture stopped while three connections were still open" is
+    worth being able to see, and a silent drop is indistinguishable from never happening."""
+    store = ExchangeStore(tmp_path / "session")
+    store.close()
+
+    store.record(captured())
+    store.record(captured())
+
+    assert store.dropped_after_close == 2
+
+
+def test_a_tls_failure_after_close_is_ignored_too(tmp_path):
+    """Same shutdown window, same hook problem."""
+    store = ExchangeStore(tmp_path / "session")
+    store.close()
+
+    store.record_tls_failure("late.example", "connection reset")
+
+    assert store.tls_failure_count == 0
+
+
+def test_closing_twice_is_safe(tmp_path):
+    """stop_capture runs on failure paths too, so it can reach a store that is already closed."""
+    store = ExchangeStore(tmp_path / "session")
+    store.close()
+    store.close()

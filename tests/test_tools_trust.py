@@ -93,9 +93,14 @@ async def test_a_trusted_simulator_with_traffic_diagnoses_ok(server, state, tmp_
 
 async def test_pinning_is_diagnosed_as_tls_failed_not_as_no_traffic(server, state, tmp_path):
     """PLAN.md's risk table requires pinning be reported as pinning. Handshakes failing while
-    the device *does* trust the authority is the only signature available."""
+    the device *does* trust the authority is the only signature available.
+
+    Requires a Scope, and the live P3 run is why; see the last section of this file.
+    """
     trust_the_authority(tmp_path)
-    await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
+    await state.start(
+        target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID
+    )
     state.store.record_tls_failure("api.bank.example", "certificate rejected by client")
 
     result = await call(server, "diagnose_capture")
@@ -128,7 +133,10 @@ async def test_the_diagnosis_reports_the_counts_it_reasoned_from(server, state, 
     result = await call(server, "diagnose_capture")
 
     assert result["observed"]["exchanges"] == 1
-    assert result["observed"]["tls_failures"] == 1
+    # Unscoped, so the failure is real but unattributable: it counts in the total and is
+    # deliberately not treated as evidence about the app under test.
+    assert result["observed"]["tls_failures_total"] == 1
+    assert result["observed"]["tls_failures"] == 0
 
 
 # --- get_trust_status ---------------------------------------------------------
@@ -246,3 +254,162 @@ async def test_the_session_manifest_records_the_device(server, state, tmp_path):
     manifest = json.loads((tmp_path / "sessions" / result["session"] / "session.json").read_text())
 
     assert manifest["udid"] == BOOTED_UDID
+
+
+# --- handshake failures from OS chatter must not poison the verdict -------------
+#
+# Found by the live acceptance run against a real simulator, and it invalidated the diagnosis
+# on any real Mac. Apple pins its own services, so a booted simulator produces a steady stream
+# of failed handshakes for configuration.apple.com, wps.apple.com and api-safari-*.smoot.apple.com
+# no matter what the app under test is doing. Judging on the raw count reported tls_failed
+# forever, which is the worst possible failure for the tool SPEC.md calls the highest-value one.
+
+#: The exact hosts observed failing during the P3 live run.
+APPLE_PINNED = ("configuration.apple.com", "wps.apple.com", "api-safari-asae1b.smoot.apple.com")
+
+
+async def test_pinned_os_chatter_does_not_make_a_working_capture_look_broken(
+    server, state, tmp_path
+):
+    """The app's traffic is arriving. Apple's own pinned services failing is background noise on
+    every Mac, and reporting it as the diagnosis sends the agent to debug nothing."""
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
+    state.store.record(captured(host="api.example.com"))
+    for host in APPLE_PINNED:
+        state.store.record_tls_failure(host, "client does not trust the proxy's certificate")
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["status"] == "ok", result
+
+
+async def test_pinning_in_the_app_under_test_is_still_reported(server, state, tmp_path):
+    """The narrowing must not blind the tool to real pinning — inside a Scope a failing host is
+    the answer, and denylisted chatter alongside it is still excluded.
+
+    Scoped because an unscoped verdict is not trustworthy; see the last section of this file.
+    """
+    trust_the_authority(tmp_path)
+    await state.start(
+        target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID
+    )
+    state.store.record(captured(host="api.example.com"))
+    state.store.record_tls_failure("configuration.apple.com", "noise")
+    state.store.record_tls_failure("api.bank.example", "certificate rejected by client")
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["status"] == "tls_failed"
+    assert "api.bank.example" in result["detail"]
+    assert "configuration.apple.com" not in result["detail"]
+
+
+async def test_a_scope_also_narrows_which_handshake_failures_matter(server, state, tmp_path):
+    """A Scope is a statement about what the agent cares about. A host outside it failing is as
+    irrelevant as a host outside it succeeding."""
+    trust_the_authority(tmp_path)
+    await state.start(
+        target="ios-simulator", port=0, scope=["api.example.com"], udid=BOOTED_UDID
+    )
+    state.store.record(captured(host="api.example.com"))
+    state.store.record_tls_failure("telemetry.vendor.example", "pinned")
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["status"] == "ok", result
+
+
+async def test_the_full_failure_count_is_still_reported(server, state, tmp_path):
+    """Filtering the verdict is not the same as hiding the evidence: the total stays visible so
+    an agent can see that handshakes are failing somewhere."""
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
+    state.store.record(captured(host="api.example.com"))
+    for host in APPLE_PINNED:
+        state.store.record_tls_failure(host, "noise")
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["observed"]["tls_failures_total"] == 3
+    assert result["observed"]["tls_failures"] == 0
+
+
+async def test_an_unattributable_handshake_failure_does_not_drive_the_verdict(
+    server, state, tmp_path
+):
+    """A failure with no SNI cannot be tied to the app under test, and in regular proxy mode the
+    machine's other traffic is indistinguishable from the simulator's (ADR-0002) — so treating
+    it as evidence recreates exactly the false tls_failed this section exists to prevent."""
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
+    state.store.record(captured(host="api.example.com"))
+    state.store.record_tls_failure(None, "no SNI offered")
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["status"] == "ok", result
+    assert result["observed"]["tls_failures_total"] == 1
+
+
+# --- pinning can only be judged inside a Scope ---------------------------------
+#
+# The most consequential finding of the P3 live run, and it is a design constraint rather than a
+# bug. Redirecting the system proxy redirects the WHOLE MACHINE (ADR-0002: regular proxy mode has
+# no process attribution). The authority is installed into the simulator's trust store only, so
+# every other application on the developer's Mac — the observed run produced discord.com,
+# s3-figma-force-client-reloads-production.figma.com and unleash.codeium.com — fails its
+# handshake against the proxy and is indistinguishable from the app under test.
+#
+# No denylist can fix that: it would have to enumerate every application a developer might run.
+# So an unscoped tls_failed verdict is worthless — it fires on a perfectly working capture. Within
+# a Scope the agent has said which hosts are the app under test, and the verdict means something.
+# SPEC.md already says host filtering "is not a convenience here, it is the only available
+# mechanism"; this is that sentence turning into behaviour.
+
+
+async def test_an_unscoped_capture_never_blames_pinning(server, state, tmp_path):
+    """Other desktop applications failing against the machine-wide proxy is the normal case, not
+    evidence about the app under test."""
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
+    state.store.record(captured(host="api.example.com"))
+    for host in ("discord.com", "unleash.codeium.com", "s3-figma.figma.com"):
+        state.store.record_tls_failure(host, "client does not trust the proxy's certificate")
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["status"] == "ok", result
+
+
+async def test_an_unscoped_capture_still_mentions_the_failures_and_how_to_judge_them(
+    server, state, tmp_path
+):
+    """Not reporting a verdict is different from hiding the evidence. The count is surfaced and
+    the remediation names the one thing that would make it interpretable."""
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
+    state.store.record(captured(host="api.example.com"))
+    state.store.record_tls_failure("discord.com", "client does not trust the proxy's certificate")
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["observed"]["tls_failures_total"] == 1
+    assert "scope" in (result["detail"] + (result["remediation"] or "")).lower()
+
+
+async def test_a_scoped_capture_judges_pinning_on_the_hosts_it_was_given(server, state, tmp_path):
+    """Inside a Scope the noise from other applications is excluded by construction, so a failure
+    really is about the app under test."""
+    trust_the_authority(tmp_path)
+    await state.start(
+        target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID
+    )
+    state.store.record_tls_failure("discord.com", "unrelated desktop app")
+    state.store.record_tls_failure("api.bank.example", "certificate rejected by client")
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["status"] == "tls_failed"
+    assert result["observed"]["tls_failures"] == 1
+    assert result["observed"]["tls_failures_total"] == 2

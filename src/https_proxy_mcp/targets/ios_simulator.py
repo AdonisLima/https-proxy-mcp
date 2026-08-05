@@ -232,7 +232,8 @@ class IosSimulatorTarget:
             return Diagnosis(
                 status="ok",
                 detail=f"routing and trust are in place and {seen.exchanges} Exchange(s) have"
-                " been recorded",
+                " been recorded" + _unattributed_failures(seen),
+                remediation=_scope_hint(seen),
             )
 
         return Diagnosis(
@@ -240,10 +241,12 @@ class IosSimulatorTarget:
             detail=(
                 f"{device.describe()} is routed through the capture port and trusts the"
                 " Interception Authority, but nothing has arrived yet"
+                + _unattributed_failures(seen)
             ),
             remediation=(
                 "drive the app so it makes a request, then call wait_for_exchanges. If it stays"
-                " empty, the app may be using a network stack that ignores the system proxy"
+                " empty, the app may be using a network stack that ignores the system proxy."
+                + (_scope_hint(seen) or "")
             ),
         )
 
@@ -259,3 +262,31 @@ class IosSimulatorTarget:
         if self._device is None:
             self._device = self._simctl.resolve(self._udid)
         return self._device
+
+
+def _unattributed_failures(seen: CaptureObservations) -> str:
+    """A note about handshake failures that could not be attributed, or nothing.
+
+    Reported even though they do not affect the verdict, because staying silent about them is how
+    a real pinning problem would go unnoticed. What they cannot do is *accuse*: the system proxy
+    is machine-wide, so most of them belong to the developer's other applications.
+    """
+    unattributed = seen.tls_failures_total - seen.tls_failures
+    if unattributed <= 0:
+        return ""
+    return (
+        f". {unattributed} TLS handshake(s) also failed for hosts outside this Session's Scope;"
+        " with the system proxy redirected machine-wide those are usually the developer's other"
+        " applications, which do not trust the Interception Authority and have no reason to"
+    )
+
+
+def _scope_hint(seen: CaptureObservations) -> str | None:
+    """Point at the one thing that would turn unattributable failures into a verdict."""
+    if seen.tls_failures_total <= seen.tls_failures:
+        return None
+    return (
+        " To find out whether the app under test is pinned, restart with a scope naming its"
+        " hosts — handshake failures can only be attributed to the app inside a Scope, because"
+        " the proxy cannot tell which process a connection came from."
+    )

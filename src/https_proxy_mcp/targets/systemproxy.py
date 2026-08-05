@@ -19,6 +19,11 @@ Two ``networksetup`` behaviours shape the restore plan and are easy to get wrong
   Reversed, it leaves the machine proxied through a port that no longer exists.
 - ``-getproxybypassdomains`` answers in prose when the list is empty, so a parser that just
   splits lines invents a bypass domain out of an English sentence.
+- Clearing the bypass list needs the literal word ``Empty``. Passing ``""`` leaves an
+  ``ExceptionsList`` containing one empty entry where the key previously held nothing, which is
+  an unfaithful restore. This one was caught only by diffing the machine's real output after the
+  live P3 run: both forms parse back to ``()``, so the round-trip assertion was satisfied while
+  the machine had in fact been changed. A parser that normalises can hide a writer that does not.
 """
 
 from __future__ import annotations
@@ -40,6 +45,10 @@ SCUTIL = "/usr/sbin/scutil"
 
 #: Sentinel filename, alongside ``sessions/`` under the root (SPEC.md, "Session directory").
 SENTINEL_NAME = "proxy-state.json"
+
+#: What ``-setproxybypassdomains`` wants in order to clear the list. Not an empty string —
+#: see :meth:`SystemProxyState.restore_commands`.
+CLEAR_BYPASS = "Empty"
 
 #: A command runner: takes an argv list, returns stdout. The seam that keeps every test in
 #: this module off the real machine. Production gets :func:`run_command`.
@@ -128,8 +137,12 @@ class SystemProxyState:
                 commands.append([flag, self.service, setting.server, str(setting.port)])
             commands.append([state_flag, self.service, "on" if setting.enabled else "off"])
 
-        # A single empty argument is how networksetup spells "no bypass domains".
-        commands.append(["-setproxybypassdomains", self.service, *(self.bypass or ("",))])
+        # The literal word "Empty" is how networksetup spells "no bypass domains", per its own
+        # help text. Passing "" instead leaves an ExceptionsList holding one empty entry where
+        # the key previously held nothing — an unfaithful restore that this module's whole
+        # purpose forbids. Found on the real machine after the P3 live run, and missed by the
+        # round-trip test because the parser normalises both forms to ().
+        commands.append(["-setproxybypassdomains", self.service, *(self.bypass or (CLEAR_BYPASS,))])
         return commands
 
     def to_dict(self) -> dict[str, object]:

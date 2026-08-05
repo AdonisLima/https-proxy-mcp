@@ -37,13 +37,48 @@ pytestmark = [
     ),
 ]
 
-#: The device the developer named for this work.
-UDID = os.environ.get("HTTPS_PROXY_MCP_E2E_UDID", "F48AAE9F-4D3F-4817-9050-7B4B0024CF07")
-
 #: Fetched over HTTPS from inside the simulator. Deliberately not a denylisted host, and
 #: deliberately somewhere stable that exists to be fetched.
 TARGET_URL = "https://example.com/"
 TARGET_HOST = "example.com"
+
+#: Reuse a specific device instead of creating one. Useful for debugging a failure by hand, but
+#: not the default: capture installs an Interception Authority into the device's trust store, and
+#: doing that to a simulator the developer actually works in is not this test's business.
+REUSE_UDID = os.environ.get("HTTPS_PROXY_MCP_E2E_UDID")
+
+DEVICE_TYPE = os.environ.get("HTTPS_PROXY_MCP_E2E_DEVICE", "iPhone 17 Pro")
+
+
+@pytest.fixture
+def simulator():
+    """A throwaway booted simulator, deleted afterwards.
+
+    Created rather than borrowed. Capturing installs an authority into the device's trust store,
+    and while that is per-device and disposable — which is exactly why SPEC.md makes it implicit —
+    "disposable" is a property of a simulator the test made, not of one the developer relies on.
+
+    `simctl create` writes a runtime notice to **stderr**, so the streams are kept apart. Folding
+    them together puts that notice into the UDID and every later command fails with "Invalid
+    device", which is a confusing five minutes if you have not seen it before.
+    """
+    if REUSE_UDID:
+        yield REUSE_UDID
+        return
+
+    udid = subprocess.run(
+        ["xcrun", "simctl", "create", "hpm-e2e-throwaway", DEVICE_TYPE],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
+    ).stdout.strip()
+    try:
+        subprocess.run(["xcrun", "simctl", "bootstatus", udid, "-b"], check=True, timeout=300)
+        yield udid
+    finally:
+        subprocess.run(["xcrun", "simctl", "shutdown", udid], capture_output=True, timeout=120)
+        subprocess.run(["xcrun", "simctl", "delete", udid], capture_output=True, timeout=120)
 
 
 def read_real_state() -> object:
@@ -51,7 +86,7 @@ def read_real_state() -> object:
     return SystemProxy("/nonexistent-sentinel").read_state()
 
 
-async def test_a_real_simulator_app_s_https_traffic_is_captured(tmp_path):
+async def test_a_real_simulator_app_s_https_traffic_is_captured(tmp_path, simulator):
     """Boot-to-body: route the machine, open a URL in the simulator, read the response back.
 
     Asserts on a decrypted HTTPS body, because that is the claim P3 makes. Plain metadata would
@@ -64,12 +99,14 @@ async def test_a_real_simulator_app_s_https_traffic_is_captured(tmp_path):
 
     try:
         started = await call(
-            server, "start_capture", target="ios-simulator", port=0, udid=UDID
+            server, "start_capture", target="ios-simulator", port=0, udid=simulator
         )
         assert started["trust"]["trusted"] is True, started["trust"]["detail"]
 
         # A real app on the device, making a real HTTPS request.
-        subprocess.run(["xcrun", "simctl", "openurl", UDID, TARGET_URL], check=True, timeout=60)
+        subprocess.run(
+            ["xcrun", "simctl", "openurl", simulator, TARGET_URL], check=True, timeout=60
+        )
 
         waited = await call(
             server,
@@ -88,8 +125,11 @@ async def test_a_real_simulator_app_s_https_traffic_is_captured(tmp_path):
         exchange_id = waited["exchanges"][0]["id"]
         detail = await call(server, "get_exchange", exchange_id=exchange_id)
         assert detail["scheme"] == "https"
-        # The body proves the authority was trusted and the TLS was actually intercepted.
-        assert detail["response"]["body"]["preview"]
+        # A status code and a readable body are only available if the TLS was actually
+        # intercepted. A CONNECT tunnel the proxy could not read into — what an untrusted
+        # authority produces — would have neither.
+        assert detail["status"] == 200, detail
+        assert detail["response_body"]["preview"], detail["response_body"]
     finally:
         if state.recording:
             await call(server, "stop_capture")
@@ -97,13 +137,13 @@ async def test_a_real_simulator_app_s_https_traffic_is_captured(tmp_path):
     assert read_real_state() == before, "the machine's proxy configuration was not restored"
 
 
-async def test_stopping_restores_the_machine_exactly(tmp_path):
+async def test_stopping_restores_the_machine_exactly(tmp_path, simulator):
     """Round-trip fidelity against the machine's real prior state, whatever it happens to be."""
     before = read_real_state()
     state = CaptureState(tmp_path)
     server = build_server(state=state)
 
-    await call(server, "start_capture", target="ios-simulator", port=0, udid=UDID)
+    await call(server, "start_capture", target="ios-simulator", port=0, udid=simulator)
     try:
         during = read_real_state()
         assert during.web.enabled is True

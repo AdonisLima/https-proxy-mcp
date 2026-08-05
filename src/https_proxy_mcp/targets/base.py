@@ -51,11 +51,18 @@ class CaptureObservations:
 
     #: Exchanges recorded this Session.
     exchanges: int = 0
-    #: TLS handshakes that died before becoming an Exchange. Non-zero with a trusted authority
-    #: is the signature of certificate pinning.
+    #: TLS handshakes that died before becoming an Exchange, counting only hosts this Session
+    #: actually reports. Non-zero with a trusted authority is the signature of pinning.
+    #:
+    #: Narrowed rather than raw, and the live P3 run is why. Apple pins its own services, so a
+    #: booted simulator fails handshakes for configuration.apple.com and friends continuously,
+    #: whatever the app under test is doing. Judging on the raw count reported ``tls_failed``
+    #: permanently on a working capture.
     tls_failures: int = 0
-    #: Hosts those handshakes were for, which is what separates one pinned host from a
-    #: wholesale trust failure.
+    #: Every handshake failure, narrowed or not, so filtering the verdict does not hide evidence.
+    tls_failures_total: int = 0
+    #: The reported hosts those handshakes were for, which is what separates one pinned endpoint
+    #: from a wholesale trust failure.
     tls_failure_hosts: tuple[str, ...] = ()
     #: How many Exchanges survive the Scope and the denylist. ``None`` when nothing narrows.
     reported: int | None = None

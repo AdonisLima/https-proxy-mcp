@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Machine-specific scratch: recorded proxy state, local recovery notes.
+.local/

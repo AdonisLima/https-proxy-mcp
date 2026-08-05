@@ -88,6 +88,8 @@ class ExchangeStore:
         self._evicted = 0
         self._tls_failures: list[TlsFailure] = []
         self._tls_failure_count = 0
+        self._closed = False
+        self._dropped_after_close = 0
         self._log_path = self._dir / LOG_FILENAME
         self._log = self._log_path.open("a", encoding="utf-8")
 
@@ -112,12 +114,26 @@ class ExchangeStore:
         """The most recent handshake failures, oldest first."""
         return list(self._tls_failures)
 
+    @property
+    def dropped_after_close(self) -> int:
+        """Hooks that arrived after the Session ended, one per connection still in flight.
+
+        Counted rather than silently discarded: "capture stopped while three connections were
+        still open" is worth being able to see, and a silent drop is indistinguishable from
+        something never having happened.
+        """
+        return self._dropped_after_close
+
     def record_tls_failure(self, host: str | None, reason: str) -> None:
         """Note a handshake that never became an Exchange.
 
         Capped rather than unbounded: a pinned app typically retries in a tight loop, and the
         hundredth identical failure carries no information the first did not.
         """
+        if self._closed:
+            self._dropped_after_close += 1
+            return
+
         self._tls_failure_count += 1
         self._tls_failures.append(TlsFailure(t=time.time(), host=host, reason=reason))
         if len(self._tls_failures) > TLS_FAILURE_CAP:
@@ -135,7 +151,7 @@ class ExchangeStore:
 
     # --- recording ------------------------------------------------------------
 
-    def record(self, captured: CapturedExchange) -> Exchange:
+    def record(self, captured: CapturedExchange) -> Exchange | None:
         """Assign an id, spill both bodies, append to the log, and retain the metadata.
 
         Ids are monotonic but ordered by *completion*, not by start: an Exchange is
@@ -143,7 +159,17 @@ class ExchangeStore:
         higher id than a fast one that started later. That is the right ordering for
         cursor-based tailing ("what finished since I last looked"), and time-based
         questions use ``t_start`` explicitly rather than leaning on id order.
+
+        Returns ``None`` for anything arriving after :meth:`close`. That is a normal part of
+        shutdown rather than a programming error: connections still in flight when the Session
+        ends deliver their hook afterwards, and mitmproxy turns an exception raised from an addon
+        into "Addon error: I/O operation on closed file" — one line per open connection, looking
+        exactly like a defect. Found during the P3 live run.
         """
+        if self._closed:
+            self._dropped_after_close += 1
+            return None
+
         self._recorded += 1
         exchange_id = self._recorded
 
@@ -229,6 +255,14 @@ class ExchangeStore:
     # --- lifecycle ------------------------------------------------------------
 
     def close(self) -> None:
+        """Stop recording and release the log. Safe to call more than once.
+
+        Idempotent because ``CaptureState.stop`` runs on failure paths as well as on the happy
+        one, so it can reach a store that is already closed.
+        """
+        if self._closed:
+            return
+        self._closed = True
         self._log.close()
 
     def __enter__(self) -> ExchangeStore:

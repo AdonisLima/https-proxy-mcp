@@ -144,8 +144,15 @@ def test_restoring_an_enabled_proxy_turns_it_back_on():
     assert ["-setwebproxystate", "Wi-Fi", "on"] in commands
 
 
-def test_an_empty_bypass_list_is_restored_by_clearing_it():
-    """Passing a lone empty argument is how networksetup spells "no bypass domains"."""
+def test_an_empty_bypass_list_is_cleared_with_the_literal_empty_keyword():
+    """The magic token is the string ``Empty``, not an empty argument.
+
+    Found on the real machine after the P3 live run: passing ``""`` leaves an ExceptionsList
+    holding one empty entry, where before the key held nothing. The observable output changes
+    from "There aren't any bypass domains set on Wi-Fi." to a blank line, so the restore was
+    *not* faithful — and the parser normalises both to ``()``, which is why the round-trip
+    assertion passed anyway. networksetup's own help documents ``Empty`` as the way to clear.
+    """
     state = SystemProxyState(
         service="Wi-Fi",
         web=ProxySetting(enabled=False, server="", port=0),
@@ -153,7 +160,8 @@ def test_an_empty_bypass_list_is_restored_by_clearing_it():
         bypass=(),
     )
 
-    assert ["-setproxybypassdomains", "Wi-Fi", ""] in state.restore_commands()
+    assert ["-setproxybypassdomains", "Wi-Fi", "Empty"] in state.restore_commands()
+    assert ["-setproxybypassdomains", "Wi-Fi", ""] not in state.restore_commands()
 
 
 def test_bypass_domains_are_restored_as_separate_arguments():
