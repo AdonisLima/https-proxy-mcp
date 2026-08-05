@@ -29,6 +29,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: spawns real processes (mitmdump, curl). Deselect with -m 'not integration'.",
+]
 
 [tool.ruff]
 line-length = 100
