@@ -1,0 +1,88 @@
+# https-proxy-mcp — Build plan (v1)
+
+Six phases. Each has an acceptance criterion you can actually check, and each leaves the tool more useful than the last. Phases 1–2 need no mobile tooling at all, which is deliberate: the core is testable against `curl` before any simulator is involved.
+
+Spec: [SPEC.md](./SPEC.md) · Vocabulary: [CONTEXT.md](./CONTEXT.md) · Decisions: [docs/adr/](./docs/adr/)
+
+## P0 — Scaffold
+
+`uv init`, Python ≥ 3.12, `mitmproxy` and the MCP SDK as dependencies, `pytest`, `ruff`. Package layout:
+
+```
+src/https_proxy_mcp/
+├── capture/          # addon, ExchangeStore, body spill, NDJSON
+├── correlate/        # Step/Exchange overlap, Timeline assembly
+├── serialize/        # redaction, truncation, pagination
+├── targets/          # CaptureTarget implementations
+├── eventsources/     # EventSource implementations
+└── server/           # MCP tool registration
+```
+
+**Done when:** `uvx --from . https-proxy-mcp` starts and responds to an MCP handshake with zero tools registered.
+
+**Verify at this point:** the actual Python floor required by the resolved mitmproxy version. The spec assumes ≥ 3.12; confirm rather than inherit the assumption.
+
+## P1 — Capture core
+
+Addon writing into `ExchangeStore`: bounded metadata ring buffer (5000), bodies spilled to `bodies/`, append-only `exchanges.ndjson`, monotonic Exchange ids, eviction counter. Redacting serializer with the stable-digest scheme (`<redacted:sha256:xxxxxxxx>`) so repeated tokens are comparable without being visible.
+
+**Done when:** `mitmdump` with the addon loaded, driven by `curl` against a local fixture server, produces correct Exchange metadata and spilled bodies; a unit test asserts no `Authorization` value survives default serialization.
+
+## P2 — Read-only MCP tools
+
+`start_capture` / `stop_capture` / `get_status`, then `list_exchanges`, `get_exchange`, `get_exchange_body`, `search_exchanges`, `tail_exchanges`, `wait_for_exchanges`, `export_curl`. Cursor pagination throughout. `CurlTarget` as a trivial `CaptureTarget` so the whole surface is exercisable without a simulator.
+
+**Done when:** a real MCP client can capture `curl` traffic, page through it, fetch one body slice, and have `wait_for_exchanges` return on a request fired after the call was made.
+
+## P3 — iOS Simulator target
+
+`networksetup` routing with the sentinel protocol (write prior state → `atexit` and signal handlers → repair-on-start). `simctl keychain add-root-cert` for trust, auto-invoked by `start_capture`. `install_authority_system` as a separate explicit tool. `diagnose_capture` distinguishing `no_connect` / `tls_failed` / `untrusted_authority` / `out_of_scope`. Builtin denylist.
+
+**Done when:** capturing a real simulator app's HTTPS traffic end to end — and, tested explicitly, `kill -9` on the server followed by a restart leaves the system proxy correctly restored.
+
+That last check is the one that matters most in this phase. Test it deliberately rather than trusting the handlers.
+
+## P4 — Runs and Timelines
+
+`run_test` process wrapper. `start_step` / `end_step` as the universal Event Source. Maestro Event Source parsing `commands-*.json`, with both output flags pointed at one directory. Correlator implementing owner-plus-overlap. `get_timeline` with summary-first rendering. `export_har`, redacted by default.
+
+**Done when:** a deliberately failing Maestro flow produces a Timeline that shows the failing assertion *and* the Exchange still in flight when it began — the worked example from the spec, reproduced for real.
+
+This is the phase that delivers the reason the project exists. Everything before it is plumbing.
+
+## P5 — Hardening and distribution
+
+`SKILL.md`, README, session retention and pruning, `0700` on session directories, adapter contract test suites, PyPI packaging for `uvx`.
+
+**Done when:** installable and usable on a second machine from published artifacts alone.
+
+## Testing
+
+- **Unit** — ring-buffer eviction, index correctness, redaction, interval overlap arithmetic.
+- **Adapter contract suites** — one shared suite every `CaptureTarget` and every `EventSource` must pass. This is what keeps the core honest as adapters multiply, and it is what makes Android in v1.1 an addition rather than a refactor.
+- **Integration** — real MCP client against a real server against a fixture HTTP server.
+- **Golden-file Timelines** — recorded Step-log and Exchange pairs with expected output, including an overlap case, a Background-only case, and a Step with no Exchanges.
+
+## Risks
+
+| Risk | Severity | Mitigation |
+|---|---|---|
+| Server dies without restoring the system proxy | **High** — breaks the machine's networking | Three-layer teardown; repair-on-start is the layer that covers `kill -9`. Explicitly tested in P3. |
+| Certificate pinning in the app under test | High — no capture for pinned hosts | `diagnose_capture` reports pinning as such rather than "no traffic". Correctly-pinned release builds are out of scope. |
+| Session directory holds unredacted secrets | Medium | `0700`, documented, pruned to 10 sessions. |
+| No process attribution in regular proxy mode | Medium | Run-window filtering plus denylist; accepted consequence of ADR-0002. |
+| `Step` turns out to be Maestro-shaped by accident | Medium | Explicit Steps ship in v1 alongside the Maestro parser, so two Event Sources exist from the start. |
+| Context blowout | Medium | Bodies unreachable from `list_exchanges` by construction; summary-first Timelines. |
+
+## Deferred
+
+**v1.1:** Android Emulator target (`subject_hash_old` naming, `-writable-system` vs Magisk); write/interception tools behind `--enable-write-tools`; `--mode local` as an opt-in iOS path once its CoreSimulator scoping is verified.
+
+**Later:** physical devices via WireGuard mode; browser targets; further Event Sources (Detox, Appium, Playwright, XCUITest); MCP notification-based push if client support becomes dependable.
+
+## Open questions
+
+1. **Can `--mode local:<spec>` scope to the app process inside CoreSimulator?** Only relevant to the deferred opt-in path now, not to v1.
+2. **How should WebSocket and long-lived streaming connections appear in an interval model?** They span many Steps by nature, so the overlap model degrades into "overlaps everything".
+3. **Do Detox, Appium, Playwright and XCUITest expose per-Step timings** rich enough for the `Step` contract, or do they need explicit marks?
+4. **Whether `simctl keychain` requires a booted simulator** or accepts a shut-down one by UDID — decides whether trust can be arranged before boot.
