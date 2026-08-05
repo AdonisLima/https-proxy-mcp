@@ -1,0 +1,40 @@
+[project]
+name = "https-proxy-mcp"
+version = "0.1.0"
+description = "MCP server that captures HTTPS traffic from an app under test and interleaves it with end-to-end test steps"
+readme = "README.md"
+authors = [
+    { name = "AdonisLima", email = "adonisjvl@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.29.0",
+    "mitmproxy>=11",
+]
+
+[project.scripts]
+https-proxy-mcp = "https_proxy_mcp:main"
+
+[build-system]
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+# Ruff formats Python blocks inside Markdown by default; the docs are prose, not code.
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
