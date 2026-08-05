@@ -6,5 +6,23 @@ sensitive reaches the agent by default.
 """
 
 from https_proxy_mcp.serialize.redact import digest, redact_body, redact_headers
+from https_proxy_mcp.serialize.views import (
+    body_preview,
+    body_slice,
+    curl_command,
+    exchange_detail,
+    exchange_summary,
+    paginate,
+)
 
-__all__ = ["digest", "redact_body", "redact_headers"]
+__all__ = [
+    "body_preview",
+    "body_slice",
+    "curl_command",
+    "digest",
+    "exchange_detail",
+    "exchange_summary",
+    "paginate",
+    "redact_body",
+    "redact_headers",
+]

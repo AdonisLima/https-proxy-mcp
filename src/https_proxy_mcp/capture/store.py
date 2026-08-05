@@ -160,6 +160,20 @@ class ExchangeStore:
         """The retained Exchange with this id, or ``None`` if unknown or evicted."""
         return self._retained.get(exchange_id)
 
+    def read_body(self, exchange: Exchange, side: str) -> bytes:
+        """The spilled body for one side of an Exchange, or no bytes if there was none.
+
+        Takes an Exchange rather than an id so it also works for one rehydrated from the
+        log after the ring buffer has evicted it — the file outlives the metadata.
+        """
+        if side not in _SUFFIXES:
+            raise ValueError(f"side must be one of {sorted(_SUFFIXES)}, got {side!r}")
+
+        body = exchange.request_body if side == "request" else exchange.response_body
+        if body.path is None:
+            return b""
+        return (self._dir / body.path).read_bytes()
+
     def __len__(self) -> int:
         """How many Exchanges are currently retained, not how many were recorded."""
         return len(self._retained)

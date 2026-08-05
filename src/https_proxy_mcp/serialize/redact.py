@@ -108,7 +108,13 @@ def redact_body(
     except ValueError:
         pass
     else:
-        return json.dumps(_redact_json(parsed), ensure_ascii=False).encode("utf-8")
+        redacted = _redact_json(parsed)
+        if redacted == parsed:
+            # Nothing was sensitive, so hand back the original bytes rather than a
+            # re-serialized copy. Otherwise every body a model sees is silently reformatted
+            # and no longer matches what the app actually sent.
+            return body
+        return json.dumps(redacted, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
     if FORM_SHAPE.fullmatch(text):
         return _redact_form(text).encode("utf-8")

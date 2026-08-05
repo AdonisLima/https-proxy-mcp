@@ -188,6 +188,52 @@ def test_a_body_within_the_cap_is_not_marked_truncated(tmp_path):
         assert store.record(captured(response_body=b"12345678")).response_body.truncated is False
 
 
+# --- reading bodies back ------------------------------------------------------
+#
+# The store owns the spill layout, so it owns reading it back. Serialization takes bytes
+# and does no I/O, which is what keeps the two testable apart.
+
+
+def test_a_spilled_response_body_is_read_back(store):
+    recorded = store.record(captured(response_body=b'{"id":1}'))
+
+    assert store.read_body(recorded, "response") == b'{"id":1}'
+
+
+def test_a_spilled_request_body_is_read_back(store):
+    recorded = store.record(captured(request_body=b"grant_type=password"))
+
+    assert store.read_body(recorded, "request") == b"grant_type=password"
+
+
+def test_reading_an_absent_body_gives_no_bytes(store):
+    recorded = store.record(captured(request_body=b""))
+
+    assert store.read_body(recorded, "request") == b""
+
+
+def test_reading_a_truncated_body_gives_what_is_on_disk(tmp_path):
+    with ExchangeStore(tmp_path / "s", body_cap_bytes=4) as store:
+        recorded = store.record(captured(response_body=b"0123456789"))
+
+        assert store.read_body(recorded, "response") == b"0123"
+
+
+def test_a_body_is_readable_from_an_exchange_rehydrated_from_the_log(store):
+    """Reading takes an Exchange, not an id, so an evicted one still resolves."""
+    store.record(captured(response_body=b'{"id":1}'))
+    rehydrated = Exchange.from_log_dict(json.loads(store.log_path.read_text().splitlines()[0]))
+
+    assert store.read_body(rehydrated, "response") == b'{"id":1}'
+
+
+def test_an_unknown_side_is_rejected(store):
+    recorded = store.record(captured())
+
+    with pytest.raises(ValueError, match="side"):
+        store.read_body(recorded, "sideways")
+
+
 # --- the NDJSON log -----------------------------------------------------------
 
 
