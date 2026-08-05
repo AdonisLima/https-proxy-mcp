@@ -58,7 +58,7 @@ def register_trust_tools(server: FastMCP, state: CaptureState) -> None:
         For a simulator this reads the device's own trust store rather than inferring anything
         from an earlier install — the store is the only thing that actually knows.
         """
-        status = _trust_only(state.build_target(target, udid=udid))
+        status = state.build_target(target, udid=udid).trust_status()
         return {"target": target, "trusted": status.trusted, "detail": status.detail}
 
     @server.tool()
@@ -115,15 +115,3 @@ def register_trust_tools(server: FastMCP, state: CaptureState) -> None:
             "command": " ".join(system_install_command(pem)),
             "authority": pem,
         }
-
-
-def _trust_only(capture_target: Any) -> Any:
-    """Report trust without installing anything.
-
-    ``get_trust_status`` is a question, and a question that changes the thing it asks about is a
-    trap: an agent calling it to check would silently arrange trust and then be unable to tell
-    whether the device had it before.
-    """
-    if isinstance(capture_target, IosSimulatorTarget):
-        return capture_target.trust_status()
-    return capture_target.ensure_trusted()

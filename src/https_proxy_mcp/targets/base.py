@@ -78,6 +78,20 @@ class CaptureTarget(Protocol):
     def ensure_trusted(self) -> TrustStatus:
         """Make the target trust the Interception Authority, and report the result."""
 
+    def trust_status(self) -> TrustStatus:
+        """Report whether the target trusts the Interception Authority, **changing nothing**.
+
+        Distinct from :meth:`ensure_trusted` because a question that alters what it asks about is a
+        trap: an agent checking whether a device was *already* trusted would silently arrange trust
+        and never be able to find out.
+
+        On the protocol rather than discovered by the tool layer. It began as an
+        ``isinstance(target, IosSimulatorTarget)`` branch in ``get_trust_status`` — which worked,
+        and put a per-target concern where a third target would have inherited
+        ``ensure_trusted``'s side effect simply by not knowing to override it. A target with nothing
+        to install may return the same answer as ``ensure_trusted``; it just has to say so.
+        """
+
     def route_traffic(self, port: int) -> None:
         """Send the target's egress through the proxy on ``port``."""
 

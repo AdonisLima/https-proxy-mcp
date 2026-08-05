@@ -45,6 +45,15 @@ class CurlTarget:
             " own authority handling with --cacert or --insecure",
         )
 
+    def trust_status(self) -> TrustStatus:
+        """The same answer as :meth:`ensure_trusted`, because there is nothing to install.
+
+        Spelled out rather than left to the protocol: the two methods differ in whether they are
+        *allowed to change anything*, and a target that has nothing to change still has to say
+        which of the two it is implementing.
+        """
+        return self.ensure_trusted()
+
     def route_traffic(self, port: int) -> None:
         """Nothing to route: the caller passes ``-x http://127.0.0.1:<port>`` itself."""
 
