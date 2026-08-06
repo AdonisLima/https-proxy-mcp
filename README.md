@@ -109,6 +109,7 @@ different answer from "finished". See [ADR-0004](./docs/adr/0004-overlap-attribu
 | [SPEC.md](./SPEC.md) | The v1 specification — architecture, tool surface, semantics, defaults |
 | [CONTEXT.md](./CONTEXT.md) | Domain vocabulary, used precisely throughout the code |
 | [PLAN.md](./PLAN.md) | Six-phase build plan with acceptance criteria |
+| [docs/v1.1-candidates.md](./docs/v1.1-candidates.md) | Everything deliberately not built, sized and ranked, with a recommended v1.1 scope |
 | [HANDOFF.md](./HANDOFF.md) | Current state, what's next, and the traps found the hard way |
 | [docs/adr/](./docs/adr/) | Architectural decisions and why they went the way they did |
 

@@ -94,6 +94,8 @@ Packaging is executed rather than asserted, in `tests/test_distribution.py`: `uv
 
 **Later:** physical devices via WireGuard mode; browser targets; further Event Sources (Detox, Appium, Playwright, XCUITest); MCP notification-based push if client support becomes dependable.
 
+All of the above, plus the deferrals and open questions recorded elsewhere, are collected, sized and ranked in **[docs/v1.1-candidates.md](./docs/v1.1-candidates.md)** — which also recommends a scope. This section stays as the record of what v1 decided to defer; the candidates document is where the thinking about it lives.
+
 ## Open questions
 
 1. **Can `--mode local:<spec>` scope to the app process inside CoreSimulator?** Only relevant to the deferred opt-in path now, not to v1.

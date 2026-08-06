@@ -74,7 +74,11 @@ Already done and verified locally, by `tests/test_distribution.py`:
 
 Not done, and only a package index can do it: that the name resolves, that the long description renders, that `uvx https-proxy-mcp` with no `--from` finds anything. If publication ever happens, TestPyPI first — the local suite cannot tell you a description failed to render.
 
-**v1.1 is the other direction**, per PLAN.md: Android Emulator, write/interception tools behind a flag, `--mode local`. Open question 1 is the interesting one there.
+**v1.1 is the other direction**, and it now has its own document: **[docs/v1.1-candidates.md](./docs/v1.1-candidates.md)** collects every deferral, open question and ADR consequence from the five files they were scattered across, sizes each one, and recommends a scope. Start there rather than re-deriving the list.
+
+Its short version: ship the three cheap additions first (a tool for the pending registry, reading Runs back from disk, `json_path`), then write/interception tools behind the flag, and run `--mode local` as a one-day **probe** rather than a feature — the answer to open question 1 changes what `diagnose_capture` can promise. Android is the biggest capability and the biggest risk, and SPEC.md's assessment that its system-CA procedure is the most brittle part of the domain has not been revisited; it deserves its own release.
+
+Three candidates in that document are **new** rather than carried over, found by reading the v1 code: the pending registry reaches a caller only through `get_timeline` and a bare count in `get_status`, `RunRegistry` has no read path at all, and `capture/addon.py` has no `websocket_message` hook.
 
 ## Decisions already made — do not reopen
 
