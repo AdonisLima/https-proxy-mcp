@@ -4,5 +4,9 @@ Domain vocabulary is defined in CONTEXT.md and used precisely throughout this pa
 """
 
 from https_proxy_mcp.server import build_server, main
+from https_proxy_mcp.version import resolve_version
 
-__all__ = ["build_server", "main"]
+#: Resolved at import from installed metadata; see :mod:`https_proxy_mcp.version`.
+__version__ = resolve_version()
+
+__all__ = ["__version__", "build_server", "main"]

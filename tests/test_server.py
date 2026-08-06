@@ -5,10 +5,14 @@ was written to fail loudly at exactly this point. What replaces it is the P2 sur
 structural guards that are cheap to check here and expensive to notice broken anywhere else.
 """
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as distribution_version
+
 import pytest
 
-from https_proxy_mcp import build_server
+from https_proxy_mcp import __version__, build_server
 from https_proxy_mcp.server import SERVER_NAME
+from https_proxy_mcp.version import UNKNOWN_VERSION, resolve_version
 
 #: Every tool the v1 read-only surface registers. Asserted exactly rather than by subset, so
 #: adding one is a deliberate act and removing one cannot pass unnoticed.
@@ -44,6 +48,39 @@ async def tools():
 
 def test_server_builds_with_expected_identity():
     assert build_server().name == SERVER_NAME
+
+
+def test_the_server_reports_its_own_version_not_the_sdk_s():
+    """``serverInfo.version`` is how a client tells one build of this server from another.
+
+    ``FastMCP.__init__`` accepts no ``version``, so left alone the low-level server falls back to
+    ``importlib.metadata.version("mcp")`` and every release of this project claims to be the
+    SDK's — a number that changes when the dependency does and says nothing about us.
+
+    Asserted through ``create_initialization_options`` because that is the exact value the
+    handshake puts on the wire, rather than an attribute that might not reach it.
+    """
+    options = build_server()._mcp_server.create_initialization_options()
+
+    assert options.server_version == __version__
+    assert options.server_version != distribution_version("mcp")
+
+
+def test_a_source_tree_with_no_metadata_says_it_does_not_know(monkeypatch):
+    """An uninstalled tree has no version, and saying so beats inventing one.
+
+    The alternative is a literal in the source next to the one in ``pyproject.toml``, which is
+    two sources of truth for the same fact and drifts the moment one is bumped alone. Here
+    ``pyproject.toml`` stays the only place a version is written, and a tree without metadata is
+    visibly not a release.
+    """
+
+    def missing(_name: str) -> str:
+        raise PackageNotFoundError(_name)
+
+    monkeypatch.setattr("https_proxy_mcp.version.distribution_version", missing)
+
+    assert resolve_version() == UNKNOWN_VERSION
 
 
 async def test_the_tool_surface_is_registered(tools):

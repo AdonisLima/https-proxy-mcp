@@ -13,6 +13,7 @@ import sys
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from https_proxy_mcp import __version__
 from test_server import REGISTERED_TOOLS
 
 SERVER_ARGS = ["-c", "from https_proxy_mcp import main; main()"]
@@ -24,6 +25,8 @@ async def test_stdio_handshake_reports_the_server_and_its_tools():
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         result = await session.initialize()
         assert result.serverInfo.name == "https-proxy-mcp"
+        # What a client actually receives, across the transport rather than from the object.
+        assert result.serverInfo.version == __version__
 
         tools = await session.list_tools()
         assert {tool.name for tool in tools.tools} == REGISTERED_TOOLS

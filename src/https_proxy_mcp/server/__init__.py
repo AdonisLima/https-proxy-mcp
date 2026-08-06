@@ -18,6 +18,7 @@ from https_proxy_mcp.server.session_tools import register_session_tools
 from https_proxy_mcp.server.state import CaptureState
 from https_proxy_mcp.server.trust_tools import register_trust_tools
 from https_proxy_mcp.targets.systemproxy import repair_system_proxy, run_command
+from https_proxy_mcp.version import resolve_version
 
 SERVER_NAME = "https-proxy-mcp"
 
@@ -48,6 +49,12 @@ def build_server(state: CaptureState | None = None) -> FastMCP:
     transport, and so a test can supply a :class:`CaptureState` of its own.
     """
     server = FastMCP(name=SERVER_NAME, instructions=INSTRUCTIONS)
+    # FastMCP takes no `version`, but the low-level server it wraps reads its own `version`
+    # attribute when it builds the handshake — and falls back to the MCP SDK's version when that
+    # is None. So this assignment is the whole difference between a client being told which build
+    # of this server it is talking to and being told which SDK we happen to depend on.
+    server._mcp_server.version = resolve_version()
+
     capture_state = state if state is not None else CaptureState()
 
     register_session_tools(server, capture_state)
