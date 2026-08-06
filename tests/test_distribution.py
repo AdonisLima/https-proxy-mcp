@@ -134,6 +134,19 @@ def test_the_wheel_declares_the_console_script(wheel, wheel_names):
     assert "https-proxy-mcp = https_proxy_mcp:main" in declared
 
 
+def test_the_wheel_carries_its_licence_text_and_not_just_a_label(wheel, wheel_names):
+    """A licence a consumer cannot read is a compliance gap, not a metadata field.
+
+    ``license-files`` is what puts the text itself in the artifact; the SPDX expression alone
+    names a licence whose terms travel nowhere. Both are asserted because they are set separately
+    and either can be dropped without the other complaining.
+    """
+    metadata = read_metadata_file(wheel, wheel_names, "METADATA")
+
+    assert "License-Expression: MIT" in metadata
+    assert [name for name in wheel_names if name.endswith("licenses/LICENSE")]
+
+
 def test_the_interpreters_under_test_are_the_ones_the_package_promises(wheel, wheel_names):
     """Guards the guard.
 
