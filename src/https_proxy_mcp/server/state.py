@@ -193,9 +193,12 @@ class CaptureState:
         # So without a Scope there is no attributable evidence, and claiming pinning would fire on
         # a capture that is working perfectly. Failures with no SNI are excluded for the same
         # reason — a failure that cannot be tied to a host cannot be tied to the app either.
-        relevant = (
+        # Collected as hosts rather than failures because the host is the only part either
+        # field below uses, and gathering them here is what makes the `if failure.host` guard
+        # visible to a type checker at the point of use.
+        relevant_hosts = (
             [
-                failure
+                failure.host
                 for failure in store.tls_failures
                 if failure.host and reporting.allows_host(failure.host)
             ]
@@ -205,11 +208,11 @@ class CaptureState:
 
         return CaptureObservations(
             exchanges=store.recorded_count,
-            tls_failures=len(relevant),
+            tls_failures=len(relevant_hosts),
             tls_failures_total=store.tls_failure_count,
             # Deduplicated, order preserved: a pinned app retries, and the same host repeated
             # forty times says nothing the first did not.
-            tls_failure_hosts=tuple(dict.fromkeys(failure.host for failure in relevant)),
+            tls_failure_hosts=tuple(dict.fromkeys(relevant_hosts)),
             reported=len(reported),
         )
 
@@ -281,7 +284,9 @@ class CaptureState:
         capacity: int = ExchangeStore.DEFAULT_CAPACITY,
     ) -> dict[str, Any]:
         """Begin a Session: prune, prepare the target, start the proxy, then route to it."""
-        if self.recording:
+        # Spelled out rather than `self.recording`, which is exactly this expression: the
+        # property hides the narrowing that makes `_session.id` below safe to read.
+        if self._session is not None:
             raise ToolError(
                 f"already recording into Session {self._session.id}; call stop_capture first"
             )

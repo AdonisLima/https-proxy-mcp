@@ -20,14 +20,14 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from https_proxy_mcp.capture.exchange import Exchange, PendingExchange
 from https_proxy_mcp.capture.reporting import in_scope
-from https_proxy_mcp.correlate.steps import Step
+from https_proxy_mcp.correlate.steps import Step, StepStatus
 from https_proxy_mcp.correlate.timeline import build_timeline
 from https_proxy_mcp.eventsources.explicit import StepStateError
 from https_proxy_mcp.eventsources.maestro import MaestroEventSource
@@ -43,7 +43,7 @@ EXPORTS_DIRNAME = "exports"
 #: The statuses ``end_step`` accepts. ``running`` is absent on purpose: a Step being ended is by
 #: definition no longer running, and ``unknown`` is for an Event Source that met a status it did
 #: not recognise, not for an agent that could simply say.
-END_STATUSES = ("passed", "failed", "skipped")
+END_STATUSES: tuple[StepStatus, ...] = ("passed", "failed", "skipped")
 
 
 def register_run_tools(server: FastMCP, state: CaptureState) -> None:
@@ -208,7 +208,11 @@ def register_run_tools(server: FastMCP, state: CaptureState) -> None:
             raise ToolError(f"status must be one of {', '.join(END_STATUSES)}, not {status!r}")
 
         try:
-            step = state.steps.end(status=status, error=error)
+            # `status` stays a plain `str` in the signature: it is what the tool's JSON schema
+            # advertises, and narrowing it to a Literal would have FastMCP reject a bad value
+            # before the friendlier ToolError above ever runs. The cast is true because of that
+            # guard, three lines up, and nowhere else.
+            step = state.steps.end(status=cast(StepStatus, status), error=error)
         except StepStateError as exc:
             raise ToolError(str(exc)) from None
 
