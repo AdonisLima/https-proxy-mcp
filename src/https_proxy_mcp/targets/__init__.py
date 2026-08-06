@@ -5,6 +5,8 @@ diagnose why capture is not working. v1 ships an iOS Simulator target and a
 trivial local target used to exercise the core without any mobile tooling.
 """
 
+from collections.abc import Callable
+
 from https_proxy_mcp.targets.base import (
     CaptureObservations,
     CaptureTarget,
@@ -15,8 +17,10 @@ from https_proxy_mcp.targets.base import (
 from https_proxy_mcp.targets.curl import CurlTarget
 from https_proxy_mcp.targets.ios_simulator import IosSimulatorTarget
 
-#: Every target ``start_capture`` accepts by name.
-_TARGETS: dict[str, type] = {
+#: Every target ``start_capture`` accepts by name. Typed as a factory rather than a class
+#: because ``CaptureTarget`` is a Protocol: what the registry promises is that calling the value
+#: yields one, not that the value is a subclass of anything.
+_TARGETS: dict[str, Callable[..., CaptureTarget]] = {
     CurlTarget.name: CurlTarget,
     IosSimulatorTarget.name: IosSimulatorTarget,
 }

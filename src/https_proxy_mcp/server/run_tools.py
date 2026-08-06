@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
@@ -210,9 +210,9 @@ def register_run_tools(server: FastMCP, state: CaptureState) -> None:
         try:
             # `status` stays a plain `str` in the signature: it is what the tool's JSON schema
             # advertises, and narrowing it to a Literal would have FastMCP reject a bad value
-            # before the friendlier ToolError above ever runs. The cast is true because of that
-            # guard, three lines up, and nowhere else.
-            step = state.steps.end(status=cast(StepStatus, status), error=error)
+            # before the friendlier ToolError above ever runs. Typing END_STATUSES as the Literal
+            # is what lets that guard, three lines up, do the narrowing here — no cast needed.
+            step = state.steps.end(status=status, error=error)
         except StepStateError as exc:
             raise ToolError(str(exc)) from None
 

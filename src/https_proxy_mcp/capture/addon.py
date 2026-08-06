@@ -15,7 +15,7 @@ Maestro's test file — but at this boundary it is the foreign type's real name.
 
 from __future__ import annotations
 
-from mitmproxy import http
+from mitmproxy import http, tls
 
 from https_proxy_mcp.capture.exchange import CapturedExchange, PendingExchange
 from https_proxy_mcp.capture.store import ExchangeStore
@@ -69,7 +69,7 @@ class CaptureAddon:
         """
         self._store.record(self._observe(flow), pending_key=flow.id)
 
-    def tls_failed_client(self, data) -> None:
+    def tls_failed_client(self, data: tls.TlsData) -> None:
         """The client's TLS handshake failed, so no request will ever arrive.
 
         Counted rather than recorded as an Exchange: nothing was requested. Without this hook a

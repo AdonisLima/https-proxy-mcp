@@ -37,6 +37,8 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import FrameType
+from typing import Any
 
 #: The binaries this module drives. Absolute, because a redirected system proxy is not the
 #: place to discover that `PATH` was surprising.
@@ -176,7 +178,7 @@ class SystemProxyState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> SystemProxyState:
+    def from_dict(cls, data: dict[str, Any]) -> SystemProxyState:
         """Rebuild state written by :meth:`to_dict`."""
         return cls(
             service=data["service"],
@@ -398,10 +400,19 @@ class SystemProxy:
             signal.signal(signum, self._make_signal_handler(signum, previous))
         self._handlers_installed = True
 
-    def _make_signal_handler(self, signum, previous):
-        def handler(received, frame):
+    def _make_signal_handler(
+        self,
+        signum: int,
+        previous: Callable[[int, FrameType | None], Any] | int | None,
+    ) -> Callable[[int, FrameType | None], None]:
+        def handler(received: int, frame: FrameType | None) -> None:
             self.restore_on_exit()
-            if callable(previous) and previous not in (signal.SIG_DFL, signal.SIG_IGN):
+            # The two checks are in this order so the comparison happens before `callable()`
+            # narrows `previous` to a function type, which would make comparing it against the
+            # Handlers enum provably non-overlapping. Both are side-effect free, so the order
+            # is presentational: the guard itself is unchanged, and deliberately kept even
+            # though a Handlers member is never callable — nothing here is covered by a test.
+            if previous not in (signal.SIG_DFL, signal.SIG_IGN) and callable(previous):
                 previous(received, frame)
                 return
             # Re-raise with the default disposition so the exit status still says what killed
