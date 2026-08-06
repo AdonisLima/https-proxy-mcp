@@ -200,7 +200,12 @@ async def test_the_built_wheel_installs_clean_and_captures_traffic(wheel, tmp_pa
     params = StdioServerParameters(
         command=str(script),
         args=[],
-        # Session bodies hold real credentials, so they go under tmp_path here as everywhere.
+        # Passed explicitly, and that is load-bearing rather than tidy. With `env=None` the SDK
+        # hands the child `get_default_environment()` — an allowlist of HOME, LOGNAME, PATH,
+        # SHELL, TERM and USER — so an *exported* HTTPS_PROXY_MCP_ROOT never reaches the server
+        # and it falls back to the developer's real ~/.https-proxy-mcp. That is not theoretical:
+        # it is how the first probe of this wheel wrote a Session into a real home while looking
+        # as though it had been redirected. Session directories hold unredacted bodies.
         env={**os.environ, "HTTPS_PROXY_MCP_ROOT": str(tmp_path / "root")},
         # Not the repository. If anything is picked up from the source tree, this is what stops
         # the test passing for the wrong reason.
@@ -223,7 +228,12 @@ async def test_the_built_wheel_installs_clean_and_captures_traffic(wheel, tmp_pa
         run(["curl", "-sS", "-o", "/dev/null", *proxied, "http://example.com"])
 
         listed = await session.call_tool("list_exchanges", {})
-        await session.call_tool("stop_capture", {})
+        stopped = await session.call_tool("stop_capture", {})
 
     hosts = [row["host"] for row in listed.structuredContent["exchanges"]]
     assert "example.com" in hosts
+
+    # Positive proof the redirect took effect, rather than trusting that it did. Asserted on where
+    # the Session actually landed instead of on the real home's absence, which would be flaky for
+    # anyone who has ever run this tool for real.
+    assert stopped.structuredContent["session_dir"].startswith(str(tmp_path / "root"))
