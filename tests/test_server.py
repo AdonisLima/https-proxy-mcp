@@ -218,7 +218,8 @@ async def test_the_usage_guide_gets_every_parameter_name_right(tools):
 
 def test_the_install_guide_covers_the_things_that_actually_go_wrong():
     """Not a word count — these are the specific failures this project has already hit, and an
-    install guide that omits them sends the reader to the traps list in a handoff file."""
+    install guide that omits them sends the reader hunting through the per-module CLAUDE.md
+    files, which are written for someone editing the code rather than installing it."""
     install = INSTALL.read_text()
 
     for topic in ("HTTPS_PROXY_MCP_ROOT", "--noproxy", "mcp.server.fastmcp", "diagnose_capture"):

@@ -1,6 +1,7 @@
-# Handoff — 2026-08-05 (P5 complete — v1 feature-complete)
+# Handoff — 2026-08-06 (v1 feature-complete; harness built)
 
-Picking this up in a fresh session. Everything needed is in the repo; this file says where to start and what not to relitigate.
+Picking this up in a fresh session. Start with [AGENTS.md](./AGENTS.md) — it is loaded
+automatically and says where everything is. This file is current state and open decisions only.
 
 ## What moved out of this file
 
@@ -29,18 +30,30 @@ questions, and the decisions that are the user's to make.
 **P0 through P5 complete and committed — every phase in PLAN.md.** Clean tree. The remote is
 `https://github.com/AdonisLima/https-proxy-mcp.git` (private).
 
-Verify: `uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy`
-→ 675 passed, 3 skipped, all checks passed, no type errors.
+Verify, or just run `/verify`:
+
+```bash
+uv run pytest -q          # 708 passed, 3 skipped, ~44s
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy               # strict, src/ only
+```
 
 v1 is feature-complete. What remains is not a phase: it is **publication** (a decision, see below) and **v1.1** (Android, write tools, `--mode local`). Nothing in the plan is outstanding.
 
-The 3 skipped are the live machine tests. They are the only things in the project that change the developer's machine, so they are gated:
+The 3 skipped are the live machine tests. They are the only things in the project that change the developer's machine, so they are gated — the runbook is `/live-e2e`, or
+[.claude/skills/live-machine-tests/](./.claude/skills/live-machine-tests/SKILL.md):
 
 ```bash
 HTTPS_PROXY_MCP_E2E=1 uv run pytest tests/test_simulator_e2e.py tests/test_maestro_e2e.py -q
 ```
 
-`uv run pytest -m "not integration"` runs the fast majority in about five seconds. The slowest thing in the ordinary suite is now `tests/test_distribution.py` (~12 s): it builds a real wheel and installs it into a throwaway virtualenv per supported interpreter. It changes nothing outside `tmp_path`.
+`uv run pytest -m "not integration"` runs 605 of them in about eleven seconds. The slowest thing in the ordinary suite is `tests/test_distribution.py` — 6.2s per interpreter, because it builds a real wheel and installs it into a throwaway virtualenv for each. It changes nothing outside `tmp_path`.
+
+**The harness is new as of this session** and is described in AGENTS.md rather than here: a
+committed gate on the six documented hazards (`.claude/hooks/`, 33 tests), three skills, three
+commands, a doc-drift reviewer, `mypy --strict` on `src/`, pre-commit, and CI. `harness-score`
+reports 108/108, L4, and CI gates on `--min-level 4` so it cannot quietly decay.
 
 Try it by hand:
 
@@ -115,14 +128,14 @@ The same probe found that one failing command carries **33 KB of `error.hierarch
 1. Can `--mode local:<spec>` scope to the app process inside CoreSimulator? Now more interesting than it was: it is what would let `diagnose_capture` report pinning without a Scope. Still v1.1.
 2. ~~How should WebSocket and long-lived streaming connections appear in an interval model?~~ **Answered by P4:** classed long-lived on `101` or `text/event-stream`, owned once by the Step that opened them, never repeated as an Overlap.
 3. Do Detox / Appium / Playwright / XCUITest expose per-Step timings rich enough for the `Step` contract, or do they need explicit marks? Less pressing now: `start_step`/`end_step` covers any of them without an adapter, so this is an enrichment question rather than a blocking one.
-4. ~~Does `simctl keychain` require a booted simulator?~~ **Answered: yes.** See the traps list.
+4. ~~Does `simctl keychain` require a booted simulator?~~ **Answered: yes.** See `src/https_proxy_mcp/targets/CLAUDE.md`.
 5. How should a non-UTF-8 body be represented? Settled for now — described in previews, base64 in slices — but nobody has used it against real binary traffic yet.
 6. `run_test` blocks, so explicit Steps cannot be interleaved with it. Maestro's artifacts cover the wrapped case and `start_step`/`end_step` covers the agent-driven case, so nothing is unreachable — but a tool that wanted both would need `run_test` to run in the background. `get_timeline` returns an explanatory `note` when this bites rather than an unexplained empty result.
 7. **New:** when should the version stop being `0.1.0`? It is now reported in the handshake, so it means something to a client for the first time, and nothing bumps it. A release would need a decision about what the number tracks; until publication is on the table there is nothing to tie it to.
 
 ## Decisions that belong to the user, still open
 
-Carried across three sessions now. All three are harmless as they stand, and none should be acted on without being asked.
+One of the four is now resolved. The rest are harmless as they stand, and none should be acted on without being asked.
 
 - ~~**No git remote.**~~ **Resolved.** The user supplied one —
   `https://github.com/AdonisLima/https-proxy-mcp.git`, private — during the harness session, and
@@ -132,6 +145,6 @@ Carried across three sessions now. All three are harmless as they stand, and non
   Roughly 100 runs a month. The harness job runs on `ubuntu-latest` at 1× for exactly this
   reason. If the run count ever becomes the binding constraint, making the repository public
   removes it entirely — standard runners are free for public repositories.
-- **Six inert authority certificates in a working simulator.** `iPhone 17 Pro - Sidekick` (`F48AAE9F-4D3F-4817-9050-7B4B0024CF07`) accumulated 6 mitmproxy authorities during P3's first live runs. Harmless — the matching private keys were in pytest `tmp_path` directories that no longer exist. `simctl` cannot remove one root cert; the only tool is `xcrun simctl keychain <udid> reset`, which wipes that device's **entire** keychain. **Do not run it without an explicit request.**
-- **The `machine` pytest marker** in `pyproject.toml` is documentation-only — the real gate is `HTTPS_PROXY_MCP_E2E=1`, for the `-m` reason in the traps list. Harmless redundancy; someone may want it gone.
+- **Six inert authority certificates in a working simulator.** `iPhone 17 Pro - Sidekick` (`F48AAE9F-4D3F-4817-9050-7B4B0024CF07`) accumulated 6 mitmproxy authorities during P3's first live runs. Harmless — the matching private keys were in pytest `tmp_path` directories that no longer exist. `simctl` cannot remove one root cert; the only tool is `xcrun simctl keychain <udid> reset`, which wipes that device's **entire** keychain. **Do not run it without an explicit request** — the committed PreToolUse gate now denies that command outright, with the reason, rather than relying on this paragraph being read.
+- **The `machine` pytest marker** in `pyproject.toml` is documentation-only — the real gate is `HTTPS_PROXY_MCP_E2E=1`, for the `-m` reason in `tests/CLAUDE.md`. Harmless redundancy; someone may want it gone.
 - **`tests/test_simulator_e2e.py` has not been re-run** since P4's `build_target` validation and `trust_status` protocol change. All 66 simulator/trust unit tests pass and P4's live run exercised the same `start_capture` → `build_target` → trust path, so the risk is low. Re-running costs one proxy mutation, so bundle it with a future live run rather than mutating the machine for it alone. P5 needed no live run and did none.

@@ -110,8 +110,13 @@ different answer from "finished". See [ADR-0004](./docs/adr/0004-overlap-attribu
 | [CONTEXT.md](./CONTEXT.md) | Domain vocabulary, used precisely throughout the code |
 | [PLAN.md](./PLAN.md) | Six-phase build plan with acceptance criteria |
 | [docs/v1.1-candidates.md](./docs/v1.1-candidates.md) | Everything deliberately not built, sized and ranked, with a recommended v1.1 scope |
-| [HANDOFF.md](./HANDOFF.md) | Current state, what's next, and the traps found the hard way |
+| [HANDOFF.md](./HANDOFF.md) | Current state, what's next, and the decisions still open |
+| [AGENTS.md](./AGENTS.md) | Agent guide: how to verify, what not to reopen, and the module map. `CLAUDE.md` is a symlink to it |
 | [docs/adr/](./docs/adr/) | Architectural decisions and why they went the way they did |
+
+The traps found the hard way — sixty-odd of them — live in a `CLAUDE.md` beside the code each
+one is about, so they arrive when that directory is in play rather than sitting at the bottom of
+a file nobody opens. [ADR-0006](./docs/adr/0006-traps-live-beside-their-modules.md) explains why.
 
 `SKILL.md` is deliberately self-contained — no links back into this repo — so it works copied to
 `~/.claude/skills/https-proxy-mcp/SKILL.md` on any machine.
