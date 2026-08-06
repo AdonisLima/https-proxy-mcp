@@ -7,6 +7,32 @@ authors = [
     { name = "AdonisLima", email = "adonisjvl@gmail.com" }
 ]
 requires-python = ">=3.12"
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "mitmproxy",
+    "https",
+    "proxy",
+    "ios-simulator",
+    "maestro",
+    "e2e-testing",
+    "network-debugging",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    # Not decoration. Capture routes traffic with `networksetup` and installs trust with
+    # `simctl`, so this is macOS-only in a way no amount of packaging can soften — a consumer on
+    # Linux should learn that from the listing rather than from a confusing runtime failure.
+    "Operating System :: MacOS :: MacOS X",
+    # Both actually exercised: tests/test_distribution.py installs the built wheel into a clean
+    # virtualenv under each and drives a real capture through it.
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Networking :: Monitoring",
+]
 dependencies = [
     # Both ceilings are load-bearing, and for a reason the lock file cannot cover: a wheel ships
     # no lock, so a consumer resolves from these ranges alone.

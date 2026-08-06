@@ -40,8 +40,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_PREFIX = "https_proxy_mcp/"
 METADATA_MARKER = ".dist-info/"
 
-#: Every interpreter ``requires-python`` admits. Installing under each is what makes the
-#: resolution honest: the dependency ranges, not the lock file, are what a consumer gets.
+#: Every interpreter ``requires-python`` admits, oldest first. Installing under each is what
+#: makes the resolution honest: the dependency ranges, not the lock file, are what a consumer
+#: gets. Necessarily a snapshot at the open end — an interpreter that does not exist yet cannot
+#: be tested, and `requires-python` promises it anyway.
 SUPPORTED_PYTHONS = ("3.12", "3.13")
 
 
@@ -130,6 +132,24 @@ def test_the_wheel_declares_the_console_script(wheel, wheel_names):
     declared = read_metadata_file(wheel, wheel_names, "entry_points.txt")
 
     assert "https-proxy-mcp = https_proxy_mcp:main" in declared
+
+
+def test_the_interpreters_under_test_are_the_ones_the_package_promises(wheel, wheel_names):
+    """Guards the guard.
+
+    ``requires-python`` is a promise to a consumer and the resolution test below is the only
+    thing that checks it. Lower the floor without adding the interpreter here and the new promise
+    ships unverified — which is precisely how ``mcp>=1.29.0`` came to be broken on an interpreter
+    nobody had installed it under.
+    """
+    metadata = read_metadata_file(wheel, wheel_names, "METADATA")
+    declared = [
+        line.removeprefix("Requires-Python:").strip()
+        for line in metadata.splitlines()
+        if line.startswith("Requires-Python:")
+    ]
+
+    assert declared == [f">={SUPPORTED_PYTHONS[0]}"]
 
 
 def test_the_wheel_reports_our_version_in_its_metadata(wheel, wheel_names):
