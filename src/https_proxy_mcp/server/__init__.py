@@ -28,13 +28,20 @@ end-to-end test steps, so a failure can be diagnosed by cause rather than sympto
 
 Call start_capture before anything else; every other tool needs a running Session.
 
+Three calls are the whole path: start_capture, then run_test to run your end-to-end test, \
+then get_timeline to read why it failed. get_timeline is the diagnosis — it says what each \
+step caused and what was already in flight when the step began, and that second one is \
+usually the answer. Driving the app yourself instead of running a test? Wrap each action in \
+start_step and end_step and you get the same Timeline.
+
 Two habits matter. Drill down rather than dumping: list_exchanges gives compact rows and \
 cannot return bodies, so pick one and call get_exchange, then get_exchange_body only if you \
 still need the bytes. And prefer wait_for_exchanges over polling tail_exchanges — "do this, \
 then wait for that request" is one blocking call.
 
-If a result is empty, call get_status before concluding there was no traffic. It tells you \
-whether capture is running at all and how many Exchanges have been seen.
+If a result is empty, call diagnose_capture before concluding there was no traffic. Nothing \
+reaching the proxy, an untrusted authority, certificate pinning and an over-narrow scope all \
+look identical from the outside, and it is the only tool that tells them apart.
 
 Secrets are replaced with a stable <redacted:sha256:...> digest. The same secret always \
 renders to the same marker, so you can tell whether a token changed between requests without \

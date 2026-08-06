@@ -7,6 +7,7 @@ structural guards that are cheap to check here and expensive to notice broken an
 
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
+from pathlib import Path
 
 import pytest
 
@@ -117,6 +118,50 @@ async def test_the_available_targets_are_named_in_the_start_tool():
 
 async def test_the_instructions_tell_a_client_where_to_start():
     assert "start_capture" in (build_server().instructions or "")
+
+
+async def test_the_instructions_name_the_path_the_project_exists_for():
+    """`INSTRUCTIONS` is the whole prompt a client sees before it calls anything, and it described
+    the Exchange tools alone. An agent reading only that would page through traffic and never
+    learn that running the test through `run_test` and reading `get_timeline` is the point — which
+    is the same omission SKILL.md exists to prevent, one layer further in.
+    """
+    instructions = build_server().instructions or ""
+
+    assert "run_test" in instructions
+    assert "get_timeline" in instructions
+
+
+# --- the shipped skill -------------------------------------------------------
+#
+# SKILL.md is the third place this server describes itself, after INSTRUCTIONS and the twenty tool
+# docstrings. It is the only one that can go stale silently: the docstrings live next to the code
+# they describe and INSTRUCTIONS is a few lines, but a prompt in a separate file at the repo root
+# has nothing tying it to the surface it documents. These two tests are that tie.
+
+SKILL = Path(__file__).resolve().parent.parent / "SKILL.md"
+
+
+def test_the_skill_has_the_frontmatter_a_harness_loads_it_by():
+    """`description` is the trigger — a skill nothing matches against is a skill nobody loads."""
+    head = SKILL.read_text().split("---")[1]
+
+    assert "name: https-proxy-mcp" in head
+    assert "description:" in head
+
+
+def test_the_skill_names_every_registered_tool():
+    """Twenty tools is more surface than one prompt holds by accident.
+
+    Asserted in this direction — every tool appears — because that is the failure that hurts: a
+    tool nobody documented is a tool an agent never calls, and no amount of reading SKILL.md
+    reveals it is missing. The reverse check (no *unknown* tool named) is deliberately not made
+    here; distinguishing a tool name from a parameter name in prose needs a curated exclusion list
+    whose upkeep would cost more than the bug it catches.
+    """
+    skill = SKILL.read_text()
+
+    assert sorted(tool for tool in REGISTERED_TOOLS if tool not in skill) == []
 
 
 async def test_no_resources_or_prompts_registered_yet():
