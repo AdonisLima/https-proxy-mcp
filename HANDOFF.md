@@ -4,8 +4,8 @@ Picking this up in a fresh session. Everything needed is in the repo; this file 
 
 ## What moved out of this file
 
-Four sections that were durable knowledge rather than session state now live where they are
-actually needed, and this file no longer repeats them:
+Six sections that were durable knowledge or repeatable procedure rather than session state
+now live where they are actually needed, and this file no longer repeats them:
 
 | Was here | Now |
 |---|---|
@@ -13,6 +13,8 @@ actually needed, and this file no longer repeats them:
 | What exists now (the module map) | [AGENTS.md](./AGENTS.md) |
 | Decisions already made — do not reopen | [AGENTS.md](./AGENTS.md) |
 | Traps discovered the hard way | the `CLAUDE.md` beside each module — `capture/`, `targets/`, `eventsources/`, `runs/`, `server/`, `tests/` |
+| Manual recovery | [.claude/skills/live-machine-tests/](./.claude/skills/live-machine-tests/SKILL.md) |
+| How the previous sessions worked | [.claude/skills/verification-discipline/](./.claude/skills/verification-discipline/SKILL.md) |
 
 The reasoning is in [ADR-0006](./docs/adr/0006-traps-live-beside-their-modules.md). The short
 version: a trap about `networksetup` is worth having when you are editing `systemproxy.py`, and
@@ -98,22 +100,6 @@ This is worth its own section for the same reason the `Empty` bug was: **every t
 
 The same probe found that one failing command carries **33 KB of `error.hierarchyRoot`** — the entire device UI tree — making a two-command artifact 123 KB. That artifact is checked in at `tests/fixtures/maestro-commands-failing-assert.json`, hierarchy and all, and a test asserts the parser drops it. A second test caps *every* Step's error length structurally, so a new Maestro error field cannot slip through.
 
-## Manual recovery
-
-If a crash ever leaves the machine proxied and repair-on-start cannot fix it:
-
-```bash
-networksetup -getwebproxy "Wi-Fi"          # see what it is now
-networksetup -setwebproxystate "Wi-Fi" off
-networksetup -setsecurewebproxystate "Wi-Fi" off
-networksetup -setproxybypassdomains "Wi-Fi" Empty
-cat ~/.https-proxy-mcp/proxy-state.json    # what it was before, if the sentinel survives
-```
-
-The developer machine's known-good state is also recorded in `.local/` (gitignored) by both live-test sessions: web and secure proxies both `Enabled: No`, server `127.0.0.1`, port `9090`, no bypass domains. Verified still true at the end of P5, which mutated nothing.
-
-**`~/.https-proxy-mcp/` should not exist** on this machine. Every test redirects the root to `tmp_path`. If you find it, something leaked — check the `stdio_client` environment trap first, and look at `sessions/*/session.json` to see which target and port created it before removing anything.
-
 ## Deliberately not built yet
 
 - **`json_path` on `get_exchange_body`.** In SPEC.md's table. Doing it properly means a JSONPath dependency or a hand-rolled subset. Decide which when something wants it.
@@ -133,28 +119,6 @@ The developer machine's known-good state is also recorded in `.local/` (gitignor
 5. How should a non-UTF-8 body be represented? Settled for now — described in previews, base64 in slices — but nobody has used it against real binary traffic yet.
 6. `run_test` blocks, so explicit Steps cannot be interleaved with it. Maestro's artifacts cover the wrapped case and `start_step`/`end_step` covers the agent-driven case, so nothing is unreachable — but a tool that wanted both would need `run_test` to run in the background. `get_timeline` returns an explanatory `note` when this bites rather than an unexplained empty result.
 7. **New:** when should the version stop being `0.1.0`? It is now reported in the handshake, so it means something to a client for the first time, and nothing bumps it. A release would need a decision about what the number tracks; until publication is on the table there is nothing to tie it to.
-
-## How the previous sessions worked
-
-Not written down anywhere else, and it is what produced 675 tests with no known defects.
-
-**Strict TDD, with the RED step actually observed.** Write the test, run it, read the failure, confirm it fails for the intended reason, then implement.
-
-**Probe unknown platform APIs with a throwaway script before designing against them.** P3's whole design came out of four short probes. P4's came out of two, against a throwaway simulator, and they changed the design twice and prevented one wrong Timeline. Each took a minute. Two of them contradicted the documentation.
-
-**Teeth-check acceptance tests by deliberately breaking the code.** Every P4 unit was checked this way — thirty-one deliberate breaks across nine commits, each expected to fail one named test. Two were more valuable than the rest: one break did not fail anything because the patch had not applied (so the check itself needs verifying), and one test turned out unable to fail at all under pytest and was rewritten.
-
-**Record the machine's real state before mutating it, and diff afterwards.** This is how the `Empty` bug was found, and nothing else would have found it — every test passed throughout. Applies to any state the tool writes that it did not create.
-
-**Read the artifacts a green test left behind.** New in P4 and it earned its place immediately: the acceptance test passed, and rebuilding its Timeline from the session directory afterwards showed that the mechanism it was supposed to be exercising had never fired. A green test tells you an assertion held, not that it held for the reason you intended.
-
-**Re-read the code before believing a handoff about it.** P4's review recorded this and P5 hit it again: this file said adapter contract suites existed for both adapter families. The EventSource one was genuinely shared; the CaptureTarget one was a `CurlTarget` unit file whose test named `test_every_target_can_report_trust_without_arranging_it` asserted `hasattr(CurlTarget(), "trust_status")` — one target, and only that the method existed. It read as the shared suite. **A handoff's account of its own work is a hypothesis.** That includes this sentence.
-
-**Check the machine afterwards, not just the tests.** P3 established this for system proxy state and it generalised in P5 to the Session root: the packaging probes left three Sessions in the developer's real home, and no test failed. The proxy discipline — record before, diff after — is really "verify state you wrote that you did not create", and the Session root is such state.
-
-**Build the artifact and install it, do not reason about it.** P5's whole finding came from this. Every in-repo test passed against the locked dependencies throughout; the break existed only in what a *consumer* resolves, and nothing short of a clean virtualenv could see it.
-
-**Writing the documentation is a test of the code.** Two defects came out of writing `docs/USAGE.md` and `docs/INSTALL.md`, both because stating a guarantee in prose forces you to check it holds everywhere you have just claimed it does: `tail_exchanges` ignored the page-size ceiling every other listing enforced, and the README's quick-start command had never worked. Neither was findable by reading the code with no claim in hand. Corollary: capture the output you document from a **real** run — the first attempt at the Timeline example produced an empty one, and pasting it would have documented a non-result as the feature.
 
 ## Decisions that belong to the user, still open
 
