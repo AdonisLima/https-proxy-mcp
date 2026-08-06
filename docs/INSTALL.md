@@ -3,7 +3,7 @@
 Getting `https-proxy-mcp` running, in an MCP client, against a real iOS Simulator.
 
 For what to do with it once it runs, see [USAGE.md](./USAGE.md). For the agent-facing prompt, see
-[SKILL.md](../SKILL.md).
+[SKILL.md](../.claude/skills/https-proxy-mcp/SKILL.md).
 
 ## Requirements
 
@@ -202,7 +202,8 @@ self-contained, so one copy is the whole installation:
 
 ```bash
 mkdir -p ~/.claude/skills/https-proxy-mcp
-cp /path/to/https-proxy-mcp/SKILL.md ~/.claude/skills/https-proxy-mcp/SKILL.md
+cp /path/to/https-proxy-mcp/.claude/skills/https-proxy-mcp/SKILL.md \
+   ~/.claude/skills/https-proxy-mcp/SKILL.md
 ```
 
 This works on any machine, including one without the repo.
