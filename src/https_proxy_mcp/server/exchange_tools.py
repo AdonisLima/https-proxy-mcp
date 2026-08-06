@@ -25,6 +25,7 @@ from https_proxy_mcp.serialize.views import (
     DEFAULT_PAGE_SIZE,
     DEFAULT_PREVIEW_BYTES,
     DEFAULT_SLICE_BYTES,
+    MAX_PAGE_SIZE,
     body_slice,
     content_type_of,
     curl_command,
@@ -179,13 +180,19 @@ def register_exchange_tools(server: FastMCP, state: CaptureState) -> None:
         # Narrowed like every other listing, or the denylist would be defeated by reaching for
         # the other browse tool.
         fresh, hidden = state.reporting(include_denied=include_denied).apply(fresh)
-        page = fresh[:limit]
+        # Clamped like every other listing. This is the one that did not reach `paginate` and so
+        # did not inherit its ceiling, which made "flooding is impossible, not discouraged" false
+        # by asking for the other browse tool — the same bypass shape the denylist narrowing above
+        # exists to close.
+        capped = max(1, min(limit, MAX_PAGE_SIZE))
+        page = fresh[:capped]
         store = state.store
 
         return {
             "exchanges": [exchange_summary(item) for item in page],
             "returned": len(page),
             "hidden": hidden,
+            "limit": capped,
             "next_cursor": str(page[-1].id) if page else cursor,
             "more_available": len(page) < len(fresh),
             "evicted": store.evicted_count,
@@ -315,7 +322,7 @@ def _page(
         "returned": len(page),
         "matched": len(reported),
         "hidden": hidden,
-        "limit": min(limit, 200),
+        "limit": min(limit, MAX_PAGE_SIZE),
         "next_cursor": next_cursor,
         "evicted": store.evicted_count,
         "recorded": store.recorded_count,

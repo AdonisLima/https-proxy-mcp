@@ -39,9 +39,11 @@ supported interpreter and drives a real capture through the installed console sc
 Point an MCP client at that command, then:
 
 1. `start_capture(target="curl", port=0)` — returns the port it bound.
-2. Send traffic through it: `curl -x http://127.0.0.1:<port> --noproxy "" https://example.com`
+2. Send traffic through it: `curl -x http://127.0.0.1:<port> --noproxy "" http://example.com`
 3. `list_exchanges()` to see it, `get_exchange(id)` for detail, `get_exchange_body(id, side)` for bytes.
 4. `stop_capture()`.
+
+Full setup — client config, simulator, troubleshooting — is in [docs/INSTALL.md](./docs/INSTALL.md).
 
 Then the part the project exists for. Run a test and read the Timeline:
 
@@ -101,6 +103,8 @@ different answer from "finished". See [ADR-0004](./docs/adr/0004-overlap-attribu
 
 | Document | Contents |
 |---|---|
+| [docs/INSTALL.md](./docs/INSTALL.md) | Installation: requirements, MCP client config, simulator setup, troubleshooting |
+| [docs/USAGE.md](./docs/USAGE.md) | Usage: worked examples with real output, and the full twenty-tool reference |
 | [SKILL.md](./SKILL.md) | The agent-facing prompt: which three tools matter, and how to read a Timeline |
 | [SPEC.md](./SPEC.md) | The v1 specification — architecture, tool surface, semantics, defaults |
 | [CONTEXT.md](./CONTEXT.md) | Domain vocabulary, used precisely throughout the code |

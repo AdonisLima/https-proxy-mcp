@@ -5,6 +5,7 @@ was written to fail loudly at exactly this point. What replaces it is the P2 sur
 structural guards that are cheap to check here and expensive to notice broken anywhere else.
 """
 
+import re
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
@@ -162,6 +163,66 @@ def test_the_skill_names_every_registered_tool():
     skill = SKILL.read_text()
 
     assert sorted(tool for tool in REGISTERED_TOOLS if tool not in skill) == []
+
+
+# --- the guides ---------------------------------------------------------------
+#
+# USAGE.md documents every tool's parameters, which is the single most rot-prone thing written about
+# this project: a renamed parameter breaks the guide silently, and the reader finds out by having a
+# call rejected. So the reference is checked against the live schemas rather than proofread.
+
+USAGE = Path(__file__).resolve().parent.parent / "docs" / "USAGE.md"
+INSTALL = Path(__file__).resolve().parent.parent / "docs" / "INSTALL.md"
+
+#: ``name(a, b, c)`` inside backticks, which is how the reference writes a signature.
+SIGNATURE = re.compile(r"`(\w+)\(([^)]*)\)`")
+
+
+def documented_signatures() -> dict[str, set[str]]:
+    """Tool name to parameter names, as USAGE.md's reference section states them.
+
+    Scoped to that one section deliberately. The prose and the recipes are full of real calls with
+    real argument *values*, and treating those as the reference would make this test fail on an
+    example rather than on a mistake.
+    """
+    body = USAGE.read_text().split("## Tool reference", 1)[1].split("\n## ", 1)[0]
+    return {
+        name: {param.strip() for param in params.split(",") if param.strip()}
+        for name, params in SIGNATURE.findall(body)
+    }
+
+
+async def test_the_usage_guide_documents_every_tool(tools):
+    documented = documented_signatures()
+
+    assert sorted(tool.name for tool in tools if tool.name not in documented) == []
+
+
+async def test_the_usage_guide_gets_every_parameter_name_right(tools):
+    """Both directions at once: a parameter the guide invented, and one it never mentions.
+
+    Invented names are the worse half — a reader copies the call and it is rejected — but an omitted
+    one is a capability nobody knows exists, which is the same failure as an undocumented tool.
+    """
+    documented = documented_signatures()
+
+    actual = {tool.name: set(tool.inputSchema["properties"]) for tool in tools}
+    wrong = {
+        name: {"documented": documented[name], "actual": parameters}
+        for name, parameters in actual.items()
+        if name in documented and documented[name] != parameters
+    }
+
+    assert wrong == {}
+
+
+def test_the_install_guide_covers_the_things_that_actually_go_wrong():
+    """Not a word count — these are the specific failures this project has already hit, and an
+    install guide that omits them sends the reader to the traps list in a handoff file."""
+    install = INSTALL.read_text()
+
+    for topic in ("HTTPS_PROXY_MCP_ROOT", "--noproxy", "mcp.server.fastmcp", "diagnose_capture"):
+        assert topic in install, topic
 
 
 async def test_no_resources_or_prompts_registered_yet():

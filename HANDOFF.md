@@ -6,7 +6,7 @@ Picking this up in a fresh session. Everything needed is in the repo; this file 
 
 **P0 through P5 complete and committed — every phase in PLAN.md.** On `main`, clean tree, **no remote configured**.
 
-Verify in one command: `uv run pytest -q && uv run ruff check .` → 671 passed, 3 skipped, all checks passed.
+Verify in one command: `uv run pytest -q && uv run ruff check .` → 675 passed, 3 skipped, all checks passed.
 
 v1 is feature-complete. What remains is not a phase: it is **publication** (a decision, see below) and **v1.1** (Android, write tools, `--mode local`). Nothing in the plan is outstanding.
 
@@ -29,10 +29,11 @@ uv build                        # wheel + sdist, ~0.04s, no network
 
 0. **[SKILL.md](./SKILL.md)** — the agent-facing prompt, and the shortest description of what this tool is *for* that exists. Read it before the spec if you want the shape in two minutes: three tools are the path, seventeen are drill-down. It is deliberately self-contained (no links into this repo) so it works copied to `~/.claude/skills/https-proxy-mcp/SKILL.md` on any machine — do not add relative links to it.
 1. **[CONTEXT.md](./CONTEXT.md)** — the domain language. Use these words exactly; they were chosen to dodge a real collision (mitmproxy's "flow" vs Maestro's "flow"). If you find yourself writing "flow", stop. The exceptions are `capture/addon.py` and `capture/filtering.py`, where `flow` names mitmproxy's own object at the boundary.
-2. **[SPEC.md](./SPEC.md)** — the v1 spec. Tool surface, semantics, numeric defaults.
-3. **[PLAN.md](./PLAN.md)** — six phases with acceptance criteria, all six now met. Each one records what was actually verified, and P4's and P5's say where the criterion was nearly met for the wrong reason.
-4. **[docs/adr/](./docs/adr/)** — five decisions and why. Two deviate from the research that preceded the project, so read them before "fixing" anything that looks wrong.
-5. **[docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md](./docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md)** — P4's design, including the four probe findings that shaped it.
+2. **[docs/USAGE.md](./docs/USAGE.md)** and **[docs/INSTALL.md](./docs/INSTALL.md)** — the human guides. USAGE.md is the **accurate** tool reference: its signatures are checked against the live schemas by a test, which SPEC.md's table is not. Every output in it was captured from a real Session rather than composed.
+3. **[SPEC.md](./SPEC.md)** — the v1 spec. Tool surface, semantics, numeric defaults. Read as a record of *intent*: its tool table has drifted from the code in four places (see the traps list). Do not use it as an API reference, and do not "fix" it to match.
+4. **[PLAN.md](./PLAN.md)** — six phases with acceptance criteria, all six now met. Each one records what was actually verified, and P4's and P5's say where the criterion was nearly met for the wrong reason.
+5. **[docs/adr/](./docs/adr/)** — five decisions and why. Two deviate from the research that preceded the project, so read them before "fixing" anything that looks wrong.
+6. **[docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md](./docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md)** — P4's design, including the four probe findings that shaped it.
 
 ## What exists now
 
@@ -236,6 +237,10 @@ Added by P5, all found by building the artifact and installing it:
 - **Batch-piping JSON-RPC into the server and closing stdin loses in-flight responses.** A probe that wrote all four messages at once got no response to the `start_capture` in the middle — the shutdown raced the response write. Not a defect; with realistic pacing all three arrive. It reads exactly like a dropped-response bug, so pace a probe before diagnosing one.
 - **`uv build` is instant and needs no network** (~0.04 s), which is why the distribution suite can build a real wheel per module rather than mocking one.
 - **PEP 639 metadata works through `uv_build`.** `license = "MIT"` plus `license-files = ["LICENSE"]` emits `Metadata-Version: 2.4`, `License-Expression`, and the text under `.dist-info/licenses/LICENSE` — inside `.dist-info/`, which is why it does not disturb the wheel-purity assertion.
+- **`tail_exchanges` honoured any `limit` you gave it**, up to the whole ring buffer. `list_exchanges` and `search_exchanges` reach `paginate`, which clamps to `MAX_PAGE_SIZE`; the tail sliced `fresh[:limit]` directly and never did. SPEC.md's claim is that flooding the context is *impossible* rather than discouraged, and this was a hole in exactly that, reachable by asking for the other browse tool — the same bypass shape the denylist narrowing in that tool already existed to close. Fixed, and it now reports `limit` like the others. **Found by writing the guide**: documenting "max 200" meant checking it applied everywhere it was claimed, and it did not.
+- **`curl` through the proxy to an `https://` URL fails with exit 60**, `SSL certificate problem: unable to get local issuer certificate` — and the README documented exactly that command as the quick-start from P2 until the guides were written. Correct, in the sense that `CurlTarget` arranges no trust by design, but it meant the first thing anyone tried did not work. Use `http://`, or `--cacert <root>/mitmproxy/mitmproxy-ca-cert.pem`, or `-k`. All three verified.
+- **A blocking `subprocess.run` starves the proxy.** `ProxyRuntime` runs mitmproxy as a task on the *same* event loop the tool surface uses (ADR-0001), so a synchronous child in an async probe blocks the thing that is supposed to answer its request, and curl hangs until its own timeout. Use `asyncio.create_subprocess_exec` and await it. Only bites hand-written probes; the test suite already does this correctly.
+- **SPEC.md's tool table has drifted from the code** in four places, and `docs/USAGE.md` is now the accurate reference. `list_exchanges` takes `include_denied`, not `run` and `include_background`; `get_exchange_body` has no `json_path` (deliberately, see below); `export_har` gained `host_filter`; `get_timeline`'s `run_id` is optional. SPEC.md is the v1 *specification* and a historical record of intent — do not "fix" it to match, and do not read it as an API reference.
 - **`ruff format` disagrees with 11 committed files** and has since before P5. `ruff check` is the gate and it passes; `ruff format` was never run across the tree. Leave it or do it deliberately in one commit — doing it incidentally buries whatever else is in the diff.
 
 ## Manual recovery
@@ -276,7 +281,7 @@ The developer machine's known-good state is also recorded in `.local/` (gitignor
 
 ## How the previous sessions worked
 
-Not written down anywhere else, and it is what produced 671 tests with no known defects.
+Not written down anywhere else, and it is what produced 675 tests with no known defects.
 
 **Strict TDD, with the RED step actually observed.** Write the test, run it, read the failure, confirm it fails for the intended reason, then implement.
 
@@ -293,6 +298,8 @@ Not written down anywhere else, and it is what produced 671 tests with no known 
 **Check the machine afterwards, not just the tests.** P3 established this for system proxy state and it generalised in P5 to the Session root: the packaging probes left three Sessions in the developer's real home, and no test failed. The proxy discipline — record before, diff after — is really "verify state you wrote that you did not create", and the Session root is such state.
 
 **Build the artifact and install it, do not reason about it.** P5's whole finding came from this. Every in-repo test passed against the locked dependencies throughout; the break existed only in what a *consumer* resolves, and nothing short of a clean virtualenv could see it.
+
+**Writing the documentation is a test of the code.** Two defects came out of writing `docs/USAGE.md` and `docs/INSTALL.md`, both because stating a guarantee in prose forces you to check it holds everywhere you have just claimed it does: `tail_exchanges` ignored the page-size ceiling every other listing enforced, and the README's quick-start command had never worked. Neither was findable by reading the code with no claim in hand. Corollary: capture the output you document from a **real** run — the first attempt at the Timeline example produced an empty one, and pasting it would have documented a non-result as the feature.
 
 ## Decisions that belong to the user, still open
 
