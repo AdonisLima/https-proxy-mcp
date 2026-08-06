@@ -1,12 +1,14 @@
-# Handoff — 2026-08-05 (P4 complete)
+# Handoff — 2026-08-05 (P5 complete — v1 feature-complete)
 
 Picking this up in a fresh session. Everything needed is in the repo; this file says where to start and what not to relitigate.
 
 ## State
 
-**P0 through P4 complete and committed.** On `main`, clean tree, **no remote configured**.
+**P0 through P5 complete and committed — every phase in PLAN.md.** On `main`, clean tree, **no remote configured**.
 
-Verify in one command: `uv run pytest -q && uv run ruff check .` → 641 passed, 3 skipped, all checks passed.
+Verify in one command: `uv run pytest -q && uv run ruff check .` → 671 passed, 3 skipped, all checks passed.
+
+v1 is feature-complete. What remains is not a phase: it is **publication** (a decision, see below) and **v1.1** (Android, write tools, `--mode local`). Nothing in the plan is outstanding.
 
 The 3 skipped are the live machine tests. They are the only things in the project that change the developer's machine, so they are gated:
 
@@ -14,19 +16,21 @@ The 3 skipped are the live machine tests. They are the only things in the projec
 HTTPS_PROXY_MCP_E2E=1 uv run pytest tests/test_simulator_e2e.py tests/test_maestro_e2e.py -q
 ```
 
-`uv run pytest -m "not integration"` runs the fast majority in about five seconds.
+`uv run pytest -m "not integration"` runs the fast majority in about five seconds. The slowest thing in the ordinary suite is now `tests/test_distribution.py` (~12 s): it builds a real wheel and installs it into a throwaway virtualenv per supported interpreter. It changes nothing outside `tmp_path`.
 
 Try it by hand:
 
 ```bash
 uv run https-proxy-mcp          # speaks MCP over stdio
+uv build                        # wheel + sdist, ~0.04s, no network
 ```
 
 ## Read these first, in this order
 
+0. **[SKILL.md](./SKILL.md)** — the agent-facing prompt, and the shortest description of what this tool is *for* that exists. Read it before the spec if you want the shape in two minutes: three tools are the path, seventeen are drill-down. It is deliberately self-contained (no links into this repo) so it works copied to `~/.claude/skills/https-proxy-mcp/SKILL.md` on any machine — do not add relative links to it.
 1. **[CONTEXT.md](./CONTEXT.md)** — the domain language. Use these words exactly; they were chosen to dodge a real collision (mitmproxy's "flow" vs Maestro's "flow"). If you find yourself writing "flow", stop. The exceptions are `capture/addon.py` and `capture/filtering.py`, where `flow` names mitmproxy's own object at the boundary.
 2. **[SPEC.md](./SPEC.md)** — the v1 spec. Tool surface, semantics, numeric defaults.
-3. **[PLAN.md](./PLAN.md)** — six phases with acceptance criteria. You are starting P5.
+3. **[PLAN.md](./PLAN.md)** — six phases with acceptance criteria, all six now met. Each one records what was actually verified, and P4's and P5's say where the criterion was nearly met for the wrong reason.
 4. **[docs/adr/](./docs/adr/)** — five decisions and why. Two deviate from the research that preceded the project, so read them before "fixing" anything that looks wrong.
 5. **[docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md](./docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md)** — P4's design, including the four probe findings that shaped it.
 
@@ -55,20 +59,21 @@ uv run https-proxy-mcp          # speaks MCP over stdio
 | `targets/ios_simulator.py` | The iOS Simulator Capture Target, including the five-way diagnosis |
 | `targets/` | `CaptureTarget` protocol, `TrustStatus`, `Diagnosis`, `CaptureObservations`, `CurlTarget` |
 | `server/` | `CaptureState` plus the **twenty** registered tools |
+| `version.py` | The version, read from installed metadata. `pyproject.toml` is the only place one is written |
 
-## Next: P5 — Hardening and distribution
+## Next: publication is a decision, not a phase
 
-`SKILL.md`, README, session retention and pruning, `0700` on session directories, adapter contract test suites, PyPI packaging for `uvx`.
+**The user chose not to publish**, asked explicitly, in the session that finished P5. Do not treat it as an outstanding task or re-raise it unprompted. If they ask, this is what is already true and what is not:
 
-**Acceptance:** installable and usable on a second machine from published artifacts alone.
+Already done and verified locally, by `tests/test_distribution.py`:
 
-Several P5 items are already done and only need checking off: retention and pruning, `0700`, and contract suites for both adapter families (`tests/test_targets.py`, and the parametrised suite at the end of `tests/test_eventsources.py`). What is genuinely left is `SKILL.md`, PyPI packaging, and `serverInfo.version`.
+- `uv build` produces a clean wheel and sdist — package only, no tests, no fixtures, no `__pycache__`.
+- The wheel installs into a fresh virtualenv under **every** interpreter `requires-python` admits, and the installed console script serves MCP and captures real traffic from a directory outside the repo.
+- Metadata: MIT (`License-Expression` plus the text under `.dist-info/licenses/`), keywords, classifiers including `Operating System :: MacOS :: MacOS X`, and `serverInfo.version` reporting ours.
 
-What P4 leaves you:
+Not done, and only a package index can do it: that the name resolves, that the long description renders, that `uvx https-proxy-mcp` with no `--from` finds anything. If publication ever happens, TestPyPI first — the local suite cannot tell you a description failed to render.
 
-- **`serverInfo.version` still reports the MCP SDK's version** (1.29.0), not ours, because `FastMCP.__init__` takes no `version` parameter. This was deferred to P5 and P5 is now.
-- **`SKILL.md` has a clear brief already**, written in SPEC.md: choose a target, run `diagnose_capture` before believing an empty result, prefer `wait_for_exchanges` over polling, drill down rather than dumping. Add to it: run the test through `run_test` and read `get_timeline`, because that is the whole point and an agent will not guess it.
-- **Twenty tools is a lot of surface for one prompt.** `tests/test_server.py` asserts the exact set, and every tool has a docstring written as a prompt. Worth reading them as a group before writing `SKILL.md`, because they were written individually.
+**v1.1 is the other direction**, per PLAN.md: Android Emulator, write/interception tools behind a flag, `--mode local`. Open question 1 is the interesting one there.
 
 ## Decisions already made — do not reopen
 
@@ -127,6 +132,19 @@ Added by P4:
 | Maestro's `defineVariables` and `applyConfiguration` are **filtered out** of Steps | Dropping data looks wrong. Neither is an action or an assertion (CONTEXT.md) and neither can cause a failure. Filtered by an explicit list of keys, so an *unrecognised* command is kept. |
 | An unrecognised Maestro status becomes `unknown`, never `passed` | Looks pedantic. A Timeline claiming a Step succeeded when nobody knows is worse than one admitting ignorance, and Maestro may add a status in any release. |
 | A mistyped target option is **refused by the registry** | Looks like ceremony for a fixed call site. Both targets accept `**_options` so one call shape fits all of them, which means neither would notice — and a mistyped `udid` leaves the simulator target choosing a device itself, which is the "capture the wrong app and report success" outcome `start_capture` forbids. |
+
+Added by P5:
+
+| Decision | Why it looks odd |
+|---|---|
+| Both dependencies carry **upper bounds** | Caps read as timidity. These are measured: mcp 2.0.0 removed `mcp.server.fastmcp` outright and declares `Requires-Python: >=3.10`, so it was an eligible candidate on every interpreter here — and a wheel ships **no lock file**, so a consumer resolves from `Requires-Dist` alone. Lifting either means porting, not relaxing. |
+| The version is read from **installed metadata**, never written in the source | A literal would be simpler and is exactly the problem: two places holding one fact, drifting the moment one is bumped alone. A tree with no metadata reports `0+unknown` rather than a plausible number, so a client can tell it is not talking to a release. |
+| `server._mcp_server.version` is assigned after construction | Reaching into a private attribute looks fragile. `FastMCP.__init__` genuinely takes no `version`, and the low-level server it wraps reads its own mutable `version` when it builds the handshake. The stdio handshake test asserts through the transport, so an SDK rename fails a test rather than silently reverting to the SDK's version. |
+| `SKILL.md` lives at the **repo root only**, not inside the wheel | SPEC.md says "ships a SKILL.md", so bundling looks more faithful. Skill files belong in skill directories rather than site-packages, and keeping it out is what lets the wheel-contents test assert "nothing outside the package" — which is the assertion that catches a fixture or a test suite shipping by accident. |
+| The wheel's contents are asserted as an **allowlist of two prefixes** | A denylist reads as more targeted. It would have to name `tests/fixtures/maestro-commands-failing-assert.json` — 123 KB of one device's UI tree — and would not name whatever the next one is. |
+| The clean-install test is parametrised over **interpreters**, not just run once | Looks like thoroughness for its own sake. It is the only thing in the suite that exercises *resolution*, and one interpreter cannot notice a dependency range that two interpreters disagree about. It is what caught the mcp 2.0.0 break. |
+| `requires-python` is pinned to the interpreters under test | Testing configuration looks like ceremony. It closes the loop: lowering the floor without adding the interpreter would ship a promise nobody had tried, which is precisely how the uncapped `mcp` range came to be broken. |
+| `get_status` is no longer what `INSTRUCTIONS` suggests for an empty result | It was the older advice and it is not wrong, just weakest. `get_status` answers "is capture running", the least likely of the four causes; `diagnose_capture` is the one that separates all four, and SPEC.md calls it the highest-value tool in the set. |
 
 ## The finding that shaped P3
 
@@ -209,6 +227,17 @@ Added by P4:
 - **`maestro openLink` to a private-IP `http://` URL did not make Safari fetch it.** A hanging sink on the host's LAN address was never reached, so `pending` stayed empty and the acceptance test passed on incidental Safari traffic instead. **The test was green either way** — it was caught only by rebuilding the Timeline from the artifacts afterwards. The deterministic proof now lives in `tests/test_pending_e2e.py`, driven through `curl`. If you want to force real device traffic to hang, verify the device actually requests your URL first.
 - **A test that reads stdin from a subprocess cannot prove stdin was closed**, because pytest has already redirected it. That test passed with the precaution removed. It now asserts the spawn arguments instead. Applies to anything about the environment a child inherits.
 
+Added by P5, all found by building the artifact and installing it:
+
+- **A wheel ships no lock file.** `uv.lock` governs development and nothing else; a consumer resolves from `Requires-Dist`. This is the whole reason the caps exist, and it is easy to forget because every in-repo test passes against the locked versions.
+- **`mcp>=1.29.0` uncapped resolved mcp 2.0.0 on Python 3.13**, which has no `mcp.server.fastmcp` under that path or any other — the package is restructured around `mcp.server.mcpserver`. The installed server died on import. **3.12 was not safe either**, it merely had a warm cache; mcp 2.0.0 declares `Requires-Python: >=3.10`. A green clean-install on one interpreter proves nothing about resolution.
+- **`stdio_client` does not forward the environment.** With `env=None` the SDK hands the child `get_default_environment()` — exactly `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`. So an **exported** `HTTPS_PROXY_MCP_ROOT` never reaches a server launched that way, and it writes Sessions holding unredacted bodies into the developer's real home while looking redirected. Pass `env=` explicitly. This leaked three times in one session before it was noticed — including from the first teeth-check *of the fix*, which ran without redirecting `HOME`.
+- **`with_termlog=False` does not make mitmproxy silent.** Its records go through Python's `logging`, and the MCP SDK installs a handler, so proxy chatter still appears. Verified harmless: stdout carries **only** valid JSON-RPC and every line of chatter is on stderr. That closes the open concern in the P1 trap below about the proxy sharing stdout with the protocol.
+- **Batch-piping JSON-RPC into the server and closing stdin loses in-flight responses.** A probe that wrote all four messages at once got no response to the `start_capture` in the middle — the shutdown raced the response write. Not a defect; with realistic pacing all three arrive. It reads exactly like a dropped-response bug, so pace a probe before diagnosing one.
+- **`uv build` is instant and needs no network** (~0.04 s), which is why the distribution suite can build a real wheel per module rather than mocking one.
+- **PEP 639 metadata works through `uv_build`.** `license = "MIT"` plus `license-files = ["LICENSE"]` emits `Metadata-Version: 2.4`, `License-Expression`, and the text under `.dist-info/licenses/LICENSE` — inside `.dist-info/`, which is why it does not disturb the wheel-purity assertion.
+- **`ruff format` disagrees with 11 committed files** and has since before P5. `ruff check` is the gate and it passes; `ruff format` was never run across the tree. Leave it or do it deliberately in one commit — doing it incidentally buries whatever else is in the diff.
+
 ## Manual recovery
 
 If a crash ever leaves the machine proxied and repair-on-start cannot fix it:
@@ -221,15 +250,19 @@ networksetup -setproxybypassdomains "Wi-Fi" Empty
 cat ~/.https-proxy-mcp/proxy-state.json    # what it was before, if the sentinel survives
 ```
 
-The developer machine's known-good state is also recorded in `.local/` (gitignored) by both live-test sessions: web and secure proxies both `Enabled: No`, server `127.0.0.1`, port `9090`, no bypass domains.
+The developer machine's known-good state is also recorded in `.local/` (gitignored) by both live-test sessions: web and secure proxies both `Enabled: No`, server `127.0.0.1`, port `9090`, no bypass domains. Verified still true at the end of P5, which mutated nothing.
+
+**`~/.https-proxy-mcp/` should not exist** on this machine. Every test redirects the root to `tmp_path`. If you find it, something leaked — check the `stdio_client` environment trap first, and look at `sessions/*/session.json` to see which target and port created it before removing anything.
 
 ## Deliberately not built yet
 
 - **`json_path` on `get_exchange_body`.** In SPEC.md's table. Doing it properly means a JSONPath dependency or a hand-rolled subset. Decide which when something wants it.
 - **WebSocket *message* capture.** The upgrade Exchange is recorded and classed long-lived; the individual frames are not. Open question 2 asked how streams should *appear* in an interval model, which the long-lived rule answers; capturing their contents is a separate v1.1 question.
 - **Reading Runs back from disk.** `RunRegistry` writes `run.json` for durability but keeps its index in memory, so a Session directory found later is readable by hand and not by `list_runs`. Nothing needs it yet.
-- **`serverInfo.version`** still reports the MCP SDK's version (1.29.0), not ours, because `FastMCP.__init__` takes no `version` parameter. **P5.**
+- **Publication.** Built and locally verified, not uploaded. The user's explicit choice — see "Next" above.
 - **Android Emulator, write tools, `--mode local`.** v1.1, per PLAN.md.
+- **`simplify` on `server/run_tools.py` and `serialize/timeline_views.py`.** Named as an optional quality pass for P5 and not taken; nothing about them is known to be wrong.
+- **A reverse check on `SKILL.md`.** A test asserts every registered tool is *named* in the skill. The other direction — that the skill names no tool which does not exist — is not asserted, because telling a tool name from a parameter name in prose needs a curated exclusion list costing more upkeep than the bug it catches.
 
 ## Open questions
 
@@ -238,11 +271,12 @@ The developer machine's known-good state is also recorded in `.local/` (gitignor
 3. Do Detox / Appium / Playwright / XCUITest expose per-Step timings rich enough for the `Step` contract, or do they need explicit marks? Less pressing now: `start_step`/`end_step` covers any of them without an adapter, so this is an enrichment question rather than a blocking one.
 4. ~~Does `simctl keychain` require a booted simulator?~~ **Answered: yes.** See the traps list.
 5. How should a non-UTF-8 body be represented? Settled for now — described in previews, base64 in slices — but nobody has used it against real binary traffic yet.
-6. **New:** `run_test` blocks, so explicit Steps cannot be interleaved with it. Maestro's artifacts cover the wrapped case and `start_step`/`end_step` covers the agent-driven case, so nothing is unreachable — but a tool that wanted both would need `run_test` to run in the background. `get_timeline` returns an explanatory `note` when this bites rather than an unexplained empty result.
+6. `run_test` blocks, so explicit Steps cannot be interleaved with it. Maestro's artifacts cover the wrapped case and `start_step`/`end_step` covers the agent-driven case, so nothing is unreachable — but a tool that wanted both would need `run_test` to run in the background. `get_timeline` returns an explanatory `note` when this bites rather than an unexplained empty result.
+7. **New:** when should the version stop being `0.1.0`? It is now reported in the handshake, so it means something to a client for the first time, and nothing bumps it. A release would need a decision about what the number tracks; until publication is on the table there is nothing to tie it to.
 
 ## How the previous sessions worked
 
-Not written down anywhere else, and it is what produced 641 tests with no known defects.
+Not written down anywhere else, and it is what produced 671 tests with no known defects.
 
 **Strict TDD, with the RED step actually observed.** Write the test, run it, read the failure, confirm it fails for the intended reason, then implement.
 
@@ -253,3 +287,18 @@ Not written down anywhere else, and it is what produced 641 tests with no known 
 **Record the machine's real state before mutating it, and diff afterwards.** This is how the `Empty` bug was found, and nothing else would have found it — every test passed throughout. Applies to any state the tool writes that it did not create.
 
 **Read the artifacts a green test left behind.** New in P4 and it earned its place immediately: the acceptance test passed, and rebuilding its Timeline from the session directory afterwards showed that the mechanism it was supposed to be exercising had never fired. A green test tells you an assertion held, not that it held for the reason you intended.
+
+**Re-read the code before believing a handoff about it.** P4's review recorded this and P5 hit it again: this file said adapter contract suites existed for both adapter families. The EventSource one was genuinely shared; the CaptureTarget one was a `CurlTarget` unit file whose test named `test_every_target_can_report_trust_without_arranging_it` asserted `hasattr(CurlTarget(), "trust_status")` — one target, and only that the method existed. It read as the shared suite. **A handoff's account of its own work is a hypothesis.** That includes this sentence.
+
+**Check the machine afterwards, not just the tests.** P3 established this for system proxy state and it generalised in P5 to the Session root: the packaging probes left three Sessions in the developer's real home, and no test failed. The proxy discipline — record before, diff after — is really "verify state you wrote that you did not create", and the Session root is such state.
+
+**Build the artifact and install it, do not reason about it.** P5's whole finding came from this. Every in-repo test passed against the locked dependencies throughout; the break existed only in what a *consumer* resolves, and nothing short of a clean virtualenv could see it.
+
+## Decisions that belong to the user, still open
+
+Carried across three sessions now. All three are harmless as they stand, and none should be acted on without being asked.
+
+- **No git remote.** 40+ commits on one disk. The user has been told across three sessions and has not acted, so it is their standing choice. **Do not raise it again unless they bring it up.**
+- **Six inert authority certificates in a working simulator.** `iPhone 17 Pro - Sidekick` (`F48AAE9F-4D3F-4817-9050-7B4B0024CF07`) accumulated 6 mitmproxy authorities during P3's first live runs. Harmless — the matching private keys were in pytest `tmp_path` directories that no longer exist. `simctl` cannot remove one root cert; the only tool is `xcrun simctl keychain <udid> reset`, which wipes that device's **entire** keychain. **Do not run it without an explicit request.**
+- **The `machine` pytest marker** in `pyproject.toml` is documentation-only — the real gate is `HTTPS_PROXY_MCP_E2E=1`, for the `-m` reason in the traps list. Harmless redundancy; someone may want it gone.
+- **`tests/test_simulator_e2e.py` has not been re-run** since P4's `build_target` validation and `trust_status` protocol change. All 66 simulator/trust unit tests pass and P4's live run exercised the same `start_capture` → `build_target` → trust path, so the risk is low. Re-running costs one proxy mutation, so bundle it with a future live run rather than mutating the machine for it alone. P5 needed no live run and did none.

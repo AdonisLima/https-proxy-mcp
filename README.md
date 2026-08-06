@@ -4,12 +4,13 @@ An MCP server that captures the HTTPS traffic of an app under test and interleav
 
 A failing assertion tells you the UI was wrong. It doesn't tell you that `GET /me` returned 401 four hundred milliseconds earlier, or that the request the screen was waiting on hadn't come back yet.
 
-> **Status: P4 Runs and Timelines.** Twenty MCP tools, working end to end against a real booted
-> simulator. Start a capture and the Mac's system proxy is redirected and the Interception
-> Authority installed into the device for you; page through traffic, drill into one Exchange,
-> slice a body, search with mitmproxy filter expressions, or block until the request you are
-> waiting for arrives. Then run your end-to-end test through `run_test` and ask `get_timeline`
-> why it failed. Hardening and packaging are P5. See [PLAN.md](./PLAN.md).
+> **Status: P5 Hardening and distribution — v1 feature-complete.** Twenty MCP tools, working end
+> to end against a real booted simulator. Start a capture and the Mac's system proxy is redirected
+> and the Interception Authority installed into the device for you; page through traffic, drill
+> into one Exchange, slice a body, search with mitmproxy filter expressions, or block until the
+> request you are waiting for arrives. Then run your end-to-end test through `run_test` and ask
+> `get_timeline` why it failed. Builds to a wheel, ships [SKILL.md](./SKILL.md), and is not
+> published to PyPI. See [PLAN.md](./PLAN.md).
 
 ## Trying it
 
@@ -17,6 +18,23 @@ A failing assertion tells you the UI was wrong. It doesn't tell you that `GET /m
 uv sync
 uv run https-proxy-mcp     # speaks MCP over stdio
 ```
+
+Or point an MCP client at a checkout — there is no PyPI release, so `--from` takes a path:
+
+```jsonc
+{
+  "mcpServers": {
+    "https-proxy-mcp": {
+      "command": "uvx",
+      "args": ["--from", "/path/to/https-proxy-mcp", "https-proxy-mcp"]
+    }
+  }
+}
+```
+
+`uv build` produces a wheel and an sdist you can point `--from` at instead. Both are verified by
+`tests/test_distribution.py`, which installs the wheel into a clean virtualenv under every
+supported interpreter and drives a real capture through the installed console script.
 
 Point an MCP client at that command, then:
 
@@ -83,11 +101,15 @@ different answer from "finished". See [ADR-0004](./docs/adr/0004-overlap-attribu
 
 | Document | Contents |
 |---|---|
+| [SKILL.md](./SKILL.md) | The agent-facing prompt: which three tools matter, and how to read a Timeline |
 | [SPEC.md](./SPEC.md) | The v1 specification — architecture, tool surface, semantics, defaults |
 | [CONTEXT.md](./CONTEXT.md) | Domain vocabulary, used precisely throughout the code |
 | [PLAN.md](./PLAN.md) | Six-phase build plan with acceptance criteria |
 | [HANDOFF.md](./HANDOFF.md) | Current state, what's next, and the traps found the hard way |
 | [docs/adr/](./docs/adr/) | Architectural decisions and why they went the way they did |
+
+`SKILL.md` is deliberately self-contained — no links back into this repo — so it works copied to
+`~/.claude/skills/https-proxy-mcp/SKILL.md` on any machine.
 
 ## Development
 
@@ -105,7 +127,12 @@ HTTPS_PROXY_MCP_E2E=1 uv run pytest tests/test_simulator_e2e.py tests/test_maest
 
 Requires Python ≥ 3.12 (mitmproxy 12's floor); `uv` provides it.
 
-The `integration` tests are real: they bind ports, run `mitmdump` and `curl`, drive a server subprocess over stdio, and `kill -9` one to prove the system proxy comes back. The rest run in about two seconds.
+The `integration` tests are real: they bind ports, run `mitmdump` and `curl`, drive a server subprocess over stdio, `kill -9` one to prove the system proxy comes back, and build the wheel and install it into throwaway virtualenvs. The rest run in about two seconds.
+
+Both dependencies carry **upper bounds**, and they earn them. A wheel ships no lock file, so a
+consumer resolves from `Requires-Dist` alone — and with `mcp` uncapped, a clean install on Python
+3.13 resolved mcp 2.0.0, which removed `mcp.server.fastmcp` entirely and left the server unable to
+import. Lifting either ceiling means porting to the new API, not relaxing a bound.
 
 `tests/test_simulator_e2e.py` and `tests/test_maestro_e2e.py` are the only files that touch your real network configuration, and both are gated behind an environment variable rather than a pytest marker — a command-line `-m` replaces any default marker expression, so `-m "not integration"` would otherwise have silently opted back in.
 
@@ -116,3 +143,9 @@ The `integration` tests are real: they bind ports, run `mitmdump` and `curl`, dr
 **v1:** iOS Simulator capture, read-only traffic access, Run-scoped Timelines with Maestro as the first Event Source, and explicit Steps for any other test tool.
 
 **Not v1:** Android Emulator, write/interception tools, physical devices, browsers. **Never:** production traffic monitoring.
+
+macOS only, and not softenable: capture routes traffic with `networksetup` and installs trust with `simctl`.
+
+## License
+
+[MIT](./LICENSE).

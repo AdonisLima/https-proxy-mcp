@@ -62,6 +62,14 @@ Open question 2 is answered: a long-lived connection (status `101`, or `text/eve
 
 **Done when:** installable and usable on a second machine from published artifacts alone.
 
+**Met, with one part explicitly not claimed.** Retention, pruning and `0700` were already done and needed only checking off. The EventSource contract suite was already shared; the CaptureTarget one was not — it was a `CurlTarget` unit file with one test named as though it covered every target — so `tests/test_targets.py` now ends in a suite parametrised over both, asserting only what `targets/base.py` promises.
+
+`SKILL.md` was written after reading all twenty tool docstrings as a group, which is what the surface needed: three tools are the path (`start_capture` → `run_test` → `get_timeline`) and the other seventeen are drill-down. The same reading found `INSTRUCTIONS` never mentioned `run_test` or `get_timeline` at all — the server's own self-description omitted the reason the project exists.
+
+Packaging is executed rather than asserted, in `tests/test_distribution.py`: `uv build`, install the wheel into a fresh virtualenv under **every** interpreter `requires-python` admits, drive the installed console script from a directory outside the repo, and capture real traffic through it. That test earned its keep immediately — with `mcp>=1.29.0` uncapped, the clean install on 3.13 resolved mcp 2.0.0, which removed `mcp.server.fastmcp` outright, and the server could not import. 3.12 had escaped only through a warm cache, not through any constraint. Both dependencies are now bounded above.
+
+**Not claimed:** publication. There is no PyPI release, so "the name resolves" and "the long description renders" are untested, and `uvx https-proxy-mcp` without `--from` finds nothing. That is a deliberate choice rather than a gap in the work — the local proof is as far as one machine goes, and the rest is a decision to publish. Licensed MIT, which is what a release would need first.
+
 ## Testing
 
 - **Unit** — ring-buffer eviction, index correctness, redaction, interval overlap arithmetic.
