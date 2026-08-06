@@ -2,11 +2,33 @@
 
 Picking this up in a fresh session. Everything needed is in the repo; this file says where to start and what not to relitigate.
 
+## What moved out of this file
+
+Four sections that were durable knowledge rather than session state now live where they are
+actually needed, and this file no longer repeats them:
+
+| Was here | Now |
+|---|---|
+| Read these first, in this order | [AGENTS.md](./AGENTS.md) |
+| What exists now (the module map) | [AGENTS.md](./AGENTS.md) |
+| Decisions already made — do not reopen | [AGENTS.md](./AGENTS.md) |
+| Traps discovered the hard way | the `CLAUDE.md` beside each module — `capture/`, `targets/`, `eventsources/`, `runs/`, `server/`, `tests/` |
+
+The reasoning is in [ADR-0006](./docs/adr/0006-traps-live-beside-their-modules.md). The short
+version: a trap about `networksetup` is worth having when you are editing `systemproxy.py`, and
+worth nothing at the bottom of a file nobody opens. `AGENTS.md` is loaded on every request;
+`CLAUDE.md` at the root is a symlink to it, which is how Claude Code reads it.
+
+What stays here is what a *handoff* is for: current state, what is deliberately unbuilt, open
+questions, and the decisions that are the user's to make.
+
 ## State
 
-**P0 through P5 complete and committed — every phase in PLAN.md.** On `main`, clean tree, **no remote configured**.
+**P0 through P5 complete and committed — every phase in PLAN.md.** Clean tree. The remote is
+`https://github.com/AdonisLima/https-proxy-mcp.git` (private).
 
-Verify in one command: `uv run pytest -q && uv run ruff check .` → 675 passed, 3 skipped, all checks passed.
+Verify: `uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy`
+→ 675 passed, 3 skipped, all checks passed, no type errors.
 
 v1 is feature-complete. What remains is not a phase: it is **publication** (a decision, see below) and **v1.1** (Android, write tools, `--mode local`). Nothing in the plan is outstanding.
 
@@ -25,43 +47,6 @@ uv run https-proxy-mcp          # speaks MCP over stdio
 uv build                        # wheel + sdist, ~0.04s, no network
 ```
 
-## Read these first, in this order
-
-0. **[SKILL.md](./SKILL.md)** — the agent-facing prompt, and the shortest description of what this tool is *for* that exists. Read it before the spec if you want the shape in two minutes: three tools are the path, seventeen are drill-down. It is deliberately self-contained (no links into this repo) so it works copied to `~/.claude/skills/https-proxy-mcp/SKILL.md` on any machine — do not add relative links to it.
-1. **[CONTEXT.md](./CONTEXT.md)** — the domain language. Use these words exactly; they were chosen to dodge a real collision (mitmproxy's "flow" vs Maestro's "flow"). If you find yourself writing "flow", stop. The exceptions are `capture/addon.py` and `capture/filtering.py`, where `flow` names mitmproxy's own object at the boundary.
-2. **[docs/USAGE.md](./docs/USAGE.md)** and **[docs/INSTALL.md](./docs/INSTALL.md)** — the human guides. USAGE.md is the **accurate** tool reference: its signatures are checked against the live schemas by a test, which SPEC.md's table is not. Every output in it was captured from a real Session rather than composed.
-3. **[SPEC.md](./SPEC.md)** — the v1 spec. Tool surface, semantics, numeric defaults. Read as a record of *intent*: its tool table has drifted from the code in four places (see the traps list). Do not use it as an API reference, and do not "fix" it to match.
-4. **[PLAN.md](./PLAN.md)** — six phases with acceptance criteria, all six now met. Each one records what was actually verified, and P4's and P5's say where the criterion was nearly met for the wrong reason.
-5. **[docs/adr/](./docs/adr/)** — five decisions and why. Two deviate from the research that preceded the project, so read them before "fixing" anything that looks wrong.
-6. **[docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md](./docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md)** — P4's design, including the four probe findings that shaped it.
-
-## What exists now
-
-| Module | Contents |
-|---|---|
-| `capture/exchange.py` | `CapturedExchange`, `Exchange`, `PendingExchange`, `BodyRef`, NDJSON round-trip |
-| `capture/store.py` | `ExchangeStore` — ring buffer, eviction counter, body spill, append-only log, `0700`, TLS-failure counter, **pending registry** |
-| `capture/addon.py` | `CaptureAddon` — the only module that knows mitmproxy's flow shapes |
-| `capture/session.py` | Session identity, layout, `$HTTPS_PROXY_MCP_ROOT`, retention to 10 |
-| `capture/runtime.py` | `ProxyRuntime` — mitmproxy in this process on the server's event loop |
-| `capture/filtering.py` | mitmproxy filter expressions applied to Exchanges |
-| `capture/reporting.py` | The builtin denylist, the Scope, and the Run window — SPEC.md's three narrowings |
-| `correlate/steps.py` | `Step` — the entire contract the Correlator depends on |
-| `correlate/timeline.py` | `Occurrence`, owner-plus-overlap arithmetic, `Timeline`. **Pure: no I/O** |
-| `runs/registry.py` | `Run`, `RunRegistry` — identity, directory, manifest |
-| `runs/process.py` | Spawning the test command, Maestro flag injection, timeouts, output capture |
-| `eventsources/` | `EventSource` protocol, `StepLog` (explicit marks), `MaestroEventSource` |
-| `serialize/redact.py` | Headers, JSON keys, form keys and JWTs → `<redacted:sha256:xxxxxxxx>` |
-| `serialize/views.py` | Summaries, previews, slices, pagination, curl rendering |
-| `serialize/timeline_views.py` | Summary-first Timeline rendering, and the explanation sentence |
-| `serialize/har.py` | HAR 1.2, redacted by default |
-| `targets/systemproxy.py` | The Mac's proxy settings, and the sentinel protocol that guarantees they come back |
-| `targets/simctl.py` | CoreSimulator: which device, install the authority, and *verify* trust |
-| `targets/ios_simulator.py` | The iOS Simulator Capture Target, including the five-way diagnosis |
-| `targets/` | `CaptureTarget` protocol, `TrustStatus`, `Diagnosis`, `CaptureObservations`, `CurlTarget` |
-| `server/` | `CaptureState` plus the **twenty** registered tools |
-| `version.py` | The version, read from installed metadata. `pyproject.toml` is the only place one is written |
-
 ## Next: publication is a decision, not a phase
 
 **The user chose not to publish**, asked explicitly, in the session that finished P5. Do not treat it as an outstanding task or re-raise it unprompted. If they ask, this is what is already true and what is not:
@@ -79,77 +64,6 @@ Not done, and only a package index can do it: that the name resolves, that the l
 Its short version: ship the three cheap additions first (a tool for the pending registry, reading Runs back from disk, `json_path`), then write/interception tools behind the flag, and run `--mode local` as a one-day **probe** rather than a feature — the answer to open question 1 changes what `diagnose_capture` can promise. Android is the biggest capability and the biggest risk, and SPEC.md's assessment that its system-CA procedure is the most brittle part of the domain has not been revisited; it deserves its own release.
 
 Three candidates in that document are **new** rather than carried over, found by reading the v1 code: the pending registry reaches a caller only through `get_timeline` and a bare count in `get_status`, `RunRegistry` has no read path at all, and `capture/addon.py` has no `websocket_message` hook.
-
-## Decisions already made — do not reopen
-
-The full list with rationale is in the ADRs and SPEC. The ones most likely to get second-guessed:
-
-| Decision | Why it looks odd |
-|---|---|
-| Python, not TypeScript | Both siblings in `common/` are TS. ADR-0001. |
-| Regular proxy mode, not `--mode local` | The research recommended local mode. ADR-0002 reverses it. |
-| The MCP spawns your test command | Unusual for an MCP server. ADR-0003 — it buys exact Run boundaries and removes clock skew entirely. |
-| Overlap attribution, not one-Step-per-Exchange | Looks over-engineered until you hit the failing-assertion case. ADR-0004. |
-| No write/interception tools in v1 | Prior art all has them. Deliberate; v1.1 behind a flag. |
-| Raw bodies on local disk, redacted at the model and export boundaries | Looks inconsistent until you need to answer "is my app sending the right token?". |
-
-Added by P1 and P2:
-
-| Decision | Why it looks odd |
-|---|---|
-| Exchange ids are ordered by **completion**, not by start | A slow request that started first can carry a higher id. That is the right ordering for cursor-based tailing ("what finished since I last looked"); time questions use `t_start` explicitly and never lean on id order. |
-| The whole `Authorization` value is digested, scheme included | `Bearer` is not preserved. Partial redaction of an unknown scheme is how partial leaks happen. |
-| `ExchangeStore` has no lock | It assumes the addon and the tool surface share one event loop, which is what ADR-0001's single process buys. Moving the proxy to its own thread means adding a lock here, deliberately. |
-| Bodies are stored **decoded**, not as they were on the wire | A gzipped blob on disk answers no debugging question. `get_content(strict=False)` so one malformed `Content-Encoding` cannot end the Session. |
-| Redaction runs **before** truncation and slicing | Cutting first leaves the tail of a straddling secret visible. So `get_exchange_body` offsets index the *redacted* body, and `total` is its length. |
-| A body with nothing sensitive comes back as its **original bytes** | Re-serializing unchanged JSON would silently reformat every body a model sees, so it would no longer match what the app sent. |
-| A binary body is **described** in a preview, not base64'd | 2 KB of base64 is noise nobody can read. `get_exchange_body` still returns the bytes when asked. |
-| `export_curl` redacts by default, so the default **does not run** | Consistent with every other boundary. Reproducing a request is an explicit `include_secrets` opt-in. |
-| `wait_for_exchanges` counts only traffic recorded **after** the call | Otherwise "tap Login, then wait for `POST /auth`" is satisfied by the previous login, which makes the tool useless. |
-| Exchanges are rebuilt into throwaway mitmproxy flows to be filtered | SPEC.md chose mitmproxy's filter language; its matchers want a flow and the store holds Exchanges. Bodies are read only when the expression mentions one. |
-| Session ids are microsecond timestamps | Lexicographic order is chronological, so retention opens no files — a Session with a corrupt manifest still prunes correctly. |
-
-Added by P3:
-
-| Decision | Why it looks odd |
-|---|---|
-| **`diagnose_capture` will not report `tls_failed` without a Scope** | It looks like the headline feature has been switched off. It has not: an unscoped verdict is *worthless*. See "the finding that shaped P3" below. |
-| The service to redirect comes from `scutil`, not from `-listnetworkserviceorder` | Ordering looks like the obvious source. On this machine it ranks Thunderbolt Bridge first while the default route goes out `en0` — so ordering proxies an interface carrying no traffic and reports success. |
-| `redirect()` **refuses** to run when a sentinel already exists | Looks unhelpfully strict. Overwriting would record the already-proxied state as the state to return to, losing the machine's real configuration for good and making every later restore a no-op that leaves it proxied. `prepare()` repairs first. |
-| A corrupt sentinel switches both proxies **off** rather than giving up | Losing fidelity looks worse than doing nothing. It is not: the prior state is already gone, and leaving traffic pointed at a dead proxy reads to the developer as "the network is broken". |
-| Trust is **verified** against the device's trust store, not inferred from the install | `simctl` exiting zero means it accepted the file, not that the device trusts it. The store is the only thing that knows. |
-| `get_trust_status` does not install anything | It duplicates `install_authority` minus the install, which looks redundant. A question that changes what it asks about is a trap: an agent checking whether a device was *already* trusted would silently arrange trust and never find out. |
-| `install_authority_system` uses `sudo -n` and fails rather than prompting | Refusing to do the thing looks unhelpful. See the traps list — an interactive prompt would hang the session permanently. |
-| `wait_for_exchanges` and `get_exchange` are **exempt** from the denylist and Scope | Inconsistent with the listings. Both are explicit: a filter naming a host, or an id that came from somewhere. Letting the denylist veto a wait turns "wait for this request" into a timeout reporting that it never happened. |
-| Session bodies live under `tmp_path` in every test, never the real home | Belt and braces on top of `$HTTPS_PROXY_MCP_ROOT`. Those directories hold real credentials. |
-
-Added by P4:
-
-| Decision | Why it looks odd |
-|---|---|
-| Pending requests are a **parallel registry**, not Exchanges with a null `t_end` | Looks like duplication. Folding them in would assign ids at request time, inverting the documented completion ordering, and would make `wait_for_exchanges` return before a status code existed — so "wait for `POST /auth`, then check it returned 401" would stop working. `pending` is deliberately absent from `ExchangeStore.__iter__`, and that one omission is what leaves every listing tool untouched by P4. |
-| Pending records **survive `close()`** | Looks like a leak. "Two requests were still open when the Session ended" is information, and often the answer to "why did the assertion time out?". A completion arriving after close leaves the record alone too, since the Exchange is not being recorded and clearing it would lose the request entirely. |
-| Ownership is **gap-tolerant** — the last Step to have *started*, not one strictly containing the Exchange | Looks sloppy. Maestro's inter-command overhead is milliseconds wide and a tap's request routinely starts just after the tap's own metadata window closed. Requiring containment drops "the tap made this request" into Background for the commonest shape of traffic there is. |
-| The Run window narrows by **intersection**, not by start time | Looks like it lets in traffic from before the Run. It lets in exactly the traffic that matters: a request already in flight when the Run began is the case ADR-0004 exists for. |
-| A long-lived connection is classed by `101` **or `text/event-stream`**, with no duration threshold | A threshold looks more general. It also needs tuning, and would miss a short WebSocket while firing on a slow upload. Both signals here are exact statements by the protocol. Answers open question 2. |
-| `get_timeline` with no `run_id` means the **latest Run**; `export_har` with none means the **whole Session** | Two defaults for one parameter looks inconsistent. A Timeline is about a Run; an export is an artifact of everything captured. An `export_har` that silently held only the last few milliseconds of a Run is the more expensive surprise. |
-| `start_step` with one already open is an **error** | An implicit close looks friendlier. It would have to invent an outcome, and a Step's outcome is the entire reason for recording it — writing "passed" over something that failed is the one unsafe direction. |
-| Maestro's `defineVariables` and `applyConfiguration` are **filtered out** of Steps | Dropping data looks wrong. Neither is an action or an assertion (CONTEXT.md) and neither can cause a failure. Filtered by an explicit list of keys, so an *unrecognised* command is kept. |
-| An unrecognised Maestro status becomes `unknown`, never `passed` | Looks pedantic. A Timeline claiming a Step succeeded when nobody knows is worse than one admitting ignorance, and Maestro may add a status in any release. |
-| A mistyped target option is **refused by the registry** | Looks like ceremony for a fixed call site. Both targets accept `**_options` so one call shape fits all of them, which means neither would notice — and a mistyped `udid` leaves the simulator target choosing a device itself, which is the "capture the wrong app and report success" outcome `start_capture` forbids. |
-
-Added by P5:
-
-| Decision | Why it looks odd |
-|---|---|
-| Both dependencies carry **upper bounds** | Caps read as timidity. These are measured: mcp 2.0.0 removed `mcp.server.fastmcp` outright and declares `Requires-Python: >=3.10`, so it was an eligible candidate on every interpreter here — and a wheel ships **no lock file**, so a consumer resolves from `Requires-Dist` alone. Lifting either means porting, not relaxing. |
-| The version is read from **installed metadata**, never written in the source | A literal would be simpler and is exactly the problem: two places holding one fact, drifting the moment one is bumped alone. A tree with no metadata reports `0+unknown` rather than a plausible number, so a client can tell it is not talking to a release. |
-| `server._mcp_server.version` is assigned after construction | Reaching into a private attribute looks fragile. `FastMCP.__init__` genuinely takes no `version`, and the low-level server it wraps reads its own mutable `version` when it builds the handshake. The stdio handshake test asserts through the transport, so an SDK rename fails a test rather than silently reverting to the SDK's version. |
-| `SKILL.md` lives at the **repo root only**, not inside the wheel | SPEC.md says "ships a SKILL.md", so bundling looks more faithful. Skill files belong in skill directories rather than site-packages, and keeping it out is what lets the wheel-contents test assert "nothing outside the package" — which is the assertion that catches a fixture or a test suite shipping by accident. |
-| The wheel's contents are asserted as an **allowlist of two prefixes** | A denylist reads as more targeted. It would have to name `tests/fixtures/maestro-commands-failing-assert.json` — 123 KB of one device's UI tree — and would not name whatever the next one is. |
-| The clean-install test is parametrised over **interpreters**, not just run once | Looks like thoroughness for its own sake. It is the only thing in the suite that exercises *resolution*, and one interpreter cannot notice a dependency range that two interpreters disagree about. It is what caught the mcp 2.0.0 break. |
-| `requires-python` is pinned to the interpreters under test | Testing configuration looks like ceremony. It closes the loop: lowering the floor without adding the interpreter would ship a promise nobody had tried, which is precisely how the uncapped `mcp` range came to be broken. |
-| `get_status` is no longer what `INSTRUCTIONS` suggests for an empty result | It was the older advice and it is not wrong, just weakest. `get_status` answers "is capture running", the least likely of the four causes; `diagnose_capture` is the one that separates all four, and SPEC.md calls it the highest-value tool in the set. |
 
 ## The finding that shaped P3
 
@@ -183,69 +97,6 @@ Maestro's `commands-*.json` **is not in execution order.** A failing two-command
 This is worth its own section for the same reason the `Empty` bug was: **every test would have passed.** Ordering by array position produces a Timeline that is internally consistent, renders cleanly, and puts the failure before the launch that preceded it. It reads as a correlation bug and it is not one. The only reason it was caught is that the artifact was probed before anything was designed against it.
 
 The same probe found that one failing command carries **33 KB of `error.hierarchyRoot`** — the entire device UI tree — making a two-command artifact 123 KB. That artifact is checked in at `tests/fixtures/maestro-commands-failing-assert.json`, hierarchy and all, and a test asserts the parser drops it. A second test caps *every* Step's error length structurally, so a new Maestro error field cannot slip through.
-
-## Traps discovered the hard way
-
-Carried forward from P1 and P2:
-
-- **`mitmproxy` needs its explicit `>=11` floor.** Loosen it and resolution fails outright — uv backtracks to an ancient release whose `urwid` uses `use_2to3`, which modern setuptools rejects. It is a build error, not a warning.
-- **`FastMCP` is the server class, not `MCPServer`.** `from mcp.server import MCPServer` raises `ImportError` in the pinned SDK (1.29.0) even though newer docs name it. Introspect the installed package rather than trusting docs.
-- **Clearing mitmproxy's `mode` option is what releases the listener.** `master.shutdown()` stops the master and leaves the port bound. `options.update(mode=[])` first, then `shutdown()`.
-- **`DumpMaster` runs fine as a task on an already-running event loop.** `master.run()` is a coroutine; `asyncio.create_task` it. This is what makes ADR-0001's single process work.
-- **`mode=["regular@127.0.0.1:0"]` binds an ephemeral port on loopback only**, and `addons.get("proxyserver").listen_addrs()` reports what it got. Never hard-code a port.
-- **A stray line on stdout does *not* corrupt MCP framing.** Tested with a deliberate flushed `print`: the client parses stdout line by line and skips what it cannot parse. Keep the proxy silent anyway — an interleaved write *inside* a JSON-RPC line would corrupt it. No test enforces this.
-- **`Message.get_content(strict=True)` — the default — raises `ValueError` on a malformed `Content-Encoding`.** Capture must pass `strict=False`.
-- **`mitmproxy.test.tflow` is the right harness for addon unit tests.** Real flow objects, and shapes a live proxy will not produce on demand.
-- **`pytest-asyncio` may run an async-generator fixture's setup and teardown in different tasks.** The anyio cancel scopes inside `stdio_client` reject that: "Attempted to exit cancel scope in a different task". Keep an MCP client's whole lifetime inside the test body.
-- **`FastMCP.call_tool` returns `(content_blocks, structured_result)`** for a tool annotated to return a dict — not a bare content list.
-- **Invoke mitmdump in tests as `python -c "from mitmproxy.tools.main import mitmdump; mitmdump()"`.** Args after `-c` land in `sys.argv[1:]` where its parser wants them.
-- **`curl` needs `--noproxy ""` to proxy localhost.** Without it an ambient `NO_PROXY` sends the request direct and the proxy records nothing.
-- **Pass mitmdump a throwaway `--set confdir=`** in tests, or it writes an Interception Authority into the developer's real `~/.mitmproxy`.
-- **Ruff 0.16 formats Python blocks inside Markdown.** `*.md` is excluded in `pyproject.toml`; leave it that way.
-- **`timeout` does not exist on macOS.** Don't reach for it in test scripts.
-
-Added by P3, all found by running against the real thing:
-
-- **`networksetup -setwebproxy` *enables* the proxy as a side effect** of setting server and port. To restore a configured-but-disabled proxy the state command must come *second*. Reversed, it leaves the machine proxied through a dead port — the exact failure the sentinel exists to prevent.
-- **Clearing the bypass list needs the literal word `Empty`, not `""`.** Passing `""` leaves an `ExceptionsList` holding one empty entry where the key previously held nothing. This one is worth dwelling on: the round-trip test passed the whole time, because `parse_bypass_domains` normalises both forms to `()`. **A parser that normalises can hide a writer that does not** — it was caught only by recording the machine's raw output before the run and diffing it afterwards. Do that for any new field here.
-- **`Authenticated Proxy Enabled: 0` also ends in `Enabled`**, and carries `0`/`1` rather than `Yes`/`No`. A substring match reads that line last and inverts the flag.
-- **`-getproxybypassdomains` answers in prose when the list is empty.** A line-splitting parser invents a bypass domain out of an English sentence.
-- **The primary network service comes from `scutil`, not service order.** `show State:/Network/Global/IPv4` gives a UUID; only `Setup:/Network/Service/<uuid>` carries the name `networksetup` accepts.
-- **`networksetup` proxy changes need no `sudo`** for a user in the `admin` group, and do not prompt. Verified by setting the already-off state to off.
-- **`simctl keychain add-root-cert` requires a *booted* device.** A shut-down one fails with `code=405, Unable to lookup in current state: Shutdown`, exit 149. This answers what was open question 4. Installing twice is harmless, which is what lets `start_capture` install unconditionally.
-- **Trust is observable, and the schema differs by runtime.** The authority's DER digest appears in the device's `TrustStore.sqlite3`. iOS 26 keys `tsettings` on a **`sha256`** column under `data/private/var/protected/trustd/private/`; the older and far more widely documented layout uses **`sha1`** under `data/Library/Keychains/`. Read both, or every device on the other runtime reports as untrusted.
-- **`sqlite3.connect` on a missing path *creates* an empty database.** That turns a read-only trust check into a write inside the device's keychain directory — it happened while probing by hand, and produced a 0-byte file that then looked like a corrupt store. Open with `file:...?mode=ro` and check existence first.
-- **`simctl create` writes a runtime notice to stderr.** `$(xcrun simctl create ... 2>&1)` puts that notice into the UDID and every later command fails with `Invalid device`. Keep the streams apart.
-- **`simctl list devices -j` reports `dataPath`.** Use it rather than rebuilding the path from the UDID.
-- **Never run an interactive `sudo` from this server.** It speaks JSON-RPC over stdin, so a password prompt reads the client's next message as a password attempt and hangs the session with no error and no way out. `install_authority_system` uses `sudo -n` and hands back the command for a human when credentials are not cached. A test asserts every `sudo` call carries `-n`.
-- **The store gets written to after `close()`.** Connections still in flight when `stop_capture` runs deliver their hook afterwards, and mitmproxy renders the exception as `Addon error: I/O operation on closed file` — one line per open connection, looking exactly like a defect. `record()` now ignores late arrivals and counts them in `dropped_after_close`.
-- **A `-m` on the command line replaces any default marker expression from `addopts`.** So gating a machine-mutating test with a marker is unsafe: `pytest -m "not integration"` would silently opt back in. The live tests are gated on `HTTPS_PROXY_MCP_E2E=1` for that reason.
-
-Added by P4:
-
-- **Maestro's `commands-*.json` is not in execution order.** See "the finding that shaped P4" above. Order by `metadata.sequenceNumber`.
-- **`metadata.timestamp` is epoch *milliseconds*** and marks the command's **start**; `duration` is milliseconds too. Missing the conversion puts every Step about fifty thousand years from the traffic it should align with.
-- **`--test-output-dir` does not contain the debug output.** Its own `--help` says so and a probe left the directory empty; `commands-*.json` lives under `--debug-output` alone. Pointing both at one directory is still worth doing so artifacts stay together, but only one of them matters.
-- **The artifact layout differs by flag.** With `--flatten-debug-output` it is `<dir>/commands-(flow.yaml).json`; without it, `<dir>/.maestro/tests/<timestamp>/commands-*.json` — a **hidden** directory. Filenames embed the flow name in literal parentheses, not a timestamp. The parser searches recursively for both; `run_test` injects the flatten flag anyway.
-- **Maestro exits 1 on a failing flow and 0 on a passing one.** Obvious in hindsight; the first probe read `$?` after a pipe to `tail` and got tail's status instead, which said 0 for a flow that had plainly failed. Beware `$?` after a pipeline.
-- **A timeout must kill the process *group*.** Maestro launches a JVM. Killing only the wrapper leaves it holding the simulator and the port, so the *next* Run fails for a reason that looks entirely unrelated. `start_new_session=True` plus `os.killpg`, tested with a real orphaned child.
-- **`maestro openLink` to a private-IP `http://` URL did not make Safari fetch it.** A hanging sink on the host's LAN address was never reached, so `pending` stayed empty and the acceptance test passed on incidental Safari traffic instead. **The test was green either way** — it was caught only by rebuilding the Timeline from the artifacts afterwards. The deterministic proof now lives in `tests/test_pending_e2e.py`, driven through `curl`. If you want to force real device traffic to hang, verify the device actually requests your URL first.
-- **A test that reads stdin from a subprocess cannot prove stdin was closed**, because pytest has already redirected it. That test passed with the precaution removed. It now asserts the spawn arguments instead. Applies to anything about the environment a child inherits.
-
-Added by P5, all found by building the artifact and installing it:
-
-- **A wheel ships no lock file.** `uv.lock` governs development and nothing else; a consumer resolves from `Requires-Dist`. This is the whole reason the caps exist, and it is easy to forget because every in-repo test passes against the locked versions.
-- **`mcp>=1.29.0` uncapped resolved mcp 2.0.0 on Python 3.13**, which has no `mcp.server.fastmcp` under that path or any other — the package is restructured around `mcp.server.mcpserver`. The installed server died on import. **3.12 was not safe either**, it merely had a warm cache; mcp 2.0.0 declares `Requires-Python: >=3.10`. A green clean-install on one interpreter proves nothing about resolution.
-- **`stdio_client` does not forward the environment.** With `env=None` the SDK hands the child `get_default_environment()` — exactly `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`. So an **exported** `HTTPS_PROXY_MCP_ROOT` never reaches a server launched that way, and it writes Sessions holding unredacted bodies into the developer's real home while looking redirected. Pass `env=` explicitly. This leaked three times in one session before it was noticed — including from the first teeth-check *of the fix*, which ran without redirecting `HOME`.
-- **`with_termlog=False` does not make mitmproxy silent.** Its records go through Python's `logging`, and the MCP SDK installs a handler, so proxy chatter still appears. Verified harmless: stdout carries **only** valid JSON-RPC and every line of chatter is on stderr. That closes the open concern in the P1 trap below about the proxy sharing stdout with the protocol.
-- **Batch-piping JSON-RPC into the server and closing stdin loses in-flight responses.** A probe that wrote all four messages at once got no response to the `start_capture` in the middle — the shutdown raced the response write. Not a defect; with realistic pacing all three arrive. It reads exactly like a dropped-response bug, so pace a probe before diagnosing one.
-- **`uv build` is instant and needs no network** (~0.04 s), which is why the distribution suite can build a real wheel per module rather than mocking one.
-- **PEP 639 metadata works through `uv_build`.** `license = "MIT"` plus `license-files = ["LICENSE"]` emits `Metadata-Version: 2.4`, `License-Expression`, and the text under `.dist-info/licenses/LICENSE` — inside `.dist-info/`, which is why it does not disturb the wheel-purity assertion.
-- **`tail_exchanges` honoured any `limit` you gave it**, up to the whole ring buffer. `list_exchanges` and `search_exchanges` reach `paginate`, which clamps to `MAX_PAGE_SIZE`; the tail sliced `fresh[:limit]` directly and never did. SPEC.md's claim is that flooding the context is *impossible* rather than discouraged, and this was a hole in exactly that, reachable by asking for the other browse tool — the same bypass shape the denylist narrowing in that tool already existed to close. Fixed, and it now reports `limit` like the others. **Found by writing the guide**: documenting "max 200" meant checking it applied everywhere it was claimed, and it did not.
-- **`curl` through the proxy to an `https://` URL fails with exit 60**, `SSL certificate problem: unable to get local issuer certificate` — and the README documented exactly that command as the quick-start from P2 until the guides were written. Correct, in the sense that `CurlTarget` arranges no trust by design, but it meant the first thing anyone tried did not work. Use `http://`, or `--cacert <root>/mitmproxy/mitmproxy-ca-cert.pem`, or `-k`. All three verified.
-- **A blocking `subprocess.run` starves the proxy.** `ProxyRuntime` runs mitmproxy as a task on the *same* event loop the tool surface uses (ADR-0001), so a synchronous child in an async probe blocks the thing that is supposed to answer its request, and curl hangs until its own timeout. Use `asyncio.create_subprocess_exec` and await it. Only bites hand-written probes; the test suite already does this correctly.
-- **SPEC.md's tool table has drifted from the code** in four places, and `docs/USAGE.md` is now the accurate reference. `list_exchanges` takes `include_denied`, not `run` and `include_background`; `get_exchange_body` has no `json_path` (deliberately, see below); `export_har` gained `host_filter`; `get_timeline`'s `run_id` is optional. SPEC.md is the v1 *specification* and a historical record of intent — do not "fix" it to match, and do not read it as an API reference.
-- **`ruff format` disagrees with 11 committed files** and has since before P5. `ruff check` is the gate and it passes; `ruff format` was never run across the tree. Leave it or do it deliberately in one commit — doing it incidentally buries whatever else is in the diff.
 
 ## Manual recovery
 
@@ -309,7 +160,14 @@ Not written down anywhere else, and it is what produced 675 tests with no known 
 
 Carried across three sessions now. All three are harmless as they stand, and none should be acted on without being asked.
 
-- **No git remote.** 40+ commits on one disk. The user has been told across three sessions and has not acted, so it is their standing choice. **Do not raise it again unless they bring it up.**
+- ~~**No git remote.**~~ **Resolved.** The user supplied one —
+  `https://github.com/AdonisLima/https-proxy-mcp.git`, private — during the harness session, and
+  chose **private with `macos-15` runners** for CI over making the repository public. That is a
+  cost decision worth recording: macOS runners bill against the free allowance at **10×**, so the
+  2,000 monthly minutes are about 200 real macOS minutes, and a ~2-minute run costs ~20 of them.
+  Roughly 100 runs a month. The harness job runs on `ubuntu-latest` at 1× for exactly this
+  reason. If the run count ever becomes the binding constraint, making the repository public
+  removes it entirely — standard runners are free for public repositories.
 - **Six inert authority certificates in a working simulator.** `iPhone 17 Pro - Sidekick` (`F48AAE9F-4D3F-4817-9050-7B4B0024CF07`) accumulated 6 mitmproxy authorities during P3's first live runs. Harmless — the matching private keys were in pytest `tmp_path` directories that no longer exist. `simctl` cannot remove one root cert; the only tool is `xcrun simctl keychain <udid> reset`, which wipes that device's **entire** keychain. **Do not run it without an explicit request.**
 - **The `machine` pytest marker** in `pyproject.toml` is documentation-only — the real gate is `HTTPS_PROXY_MCP_E2E=1`, for the `-m` reason in the traps list. Harmless redundancy; someone may want it gone.
 - **`tests/test_simulator_e2e.py` has not been re-run** since P4's `build_target` validation and `trust_status` protocol change. All 66 simulator/trust unit tests pass and P4's live run exercised the same `start_capture` → `build_target` → trust path, so the risk is low. Re-running costs one proxy mutation, so bundle it with a future live run rather than mutating the machine for it alone. P5 needed no live run and did none.
