@@ -30,9 +30,7 @@ def exch(
     response_size: int = 0,
 ) -> Exchange:
     def body(size: int) -> BodyRef:
-        return BodyRef(
-            size=size, stored_bytes=size, path="x" if size else None, truncated=False
-        )
+        return BodyRef(size=size, stored_bytes=size, path="x" if size else None, truncated=False)
 
     return Exchange(
         id=exchange_id,

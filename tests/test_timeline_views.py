@@ -22,9 +22,7 @@ from https_proxy_mcp.serialize.timeline_views import timeline_view
 @pytest.fixture
 def run(tmp_path):
     registry = RunRegistry(tmp_path)
-    created = registry.create(
-        command=("maestro", "test", "login.yaml"), t_start=0.0, label="login"
-    )
+    created = registry.create(command=("maestro", "test", "login.yaml"), t_start=0.0, label="login")
     return registry.complete(created, t_end=5.0, exit_code=1)
 
 
@@ -38,14 +36,22 @@ def step(start_ms, duration_ms, label, status="passed", error=None):
     )
 
 
-def exch(exchange_id, start_ms, end_ms, *, host="api.example.com", path="/", method="GET",
-         status_code=200, request_size=0, response_size=0):
+def exch(
+    exchange_id,
+    start_ms,
+    end_ms,
+    *,
+    host="api.example.com",
+    path="/",
+    method="GET",
+    status_code=200,
+    request_size=0,
+    response_size=0,
+):
     from https_proxy_mcp.capture.exchange import BodyRef
 
     def body(size):
-        return BodyRef(
-            size=size, stored_bytes=size, path="x" if size else None, truncated=False
-        )
+        return BodyRef(size=size, stored_bytes=size, path="x" if size else None, truncated=False)
 
     return Exchange(
         id=exchange_id,
@@ -148,7 +154,7 @@ def test_a_passing_step_gets_no_explanation(run):
 
 
 def test_the_explanation_names_a_failing_status_code_when_there_is_one(run):
-    """"The request came back 401" is a better answer than "a request overlapped"."""
+    """ "The request came back 401" is a better answer than "a request overlapped"."""
     steps = [step(0, 1000, "assertVisible: Home", status="failed", error="not visible")]
     exchanges = [exch(7, 10, 20, method="POST", path="/auth", status_code=401)]
     timeline = build_timeline(steps=steps, exchanges=exchanges, window=run.window)

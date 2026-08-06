@@ -542,13 +542,15 @@ async def test_waiting_is_not_narrowed(server, recording):
     for, so letting the denylist veto it would turn "wait for this request" into a timeout that
     reports the request never happened — a lie, and a very expensive one to debug.
     """
+
     async def record_soon():
         await asyncio.sleep(0.05)
         recording.store.record(captured(host="configuration.apple.com"))
 
     task = asyncio.create_task(record_soon())
-    result = await call(server, "wait_for_exchanges", filter="~d configuration.apple.com",
-                        timeout_ms=3000)
+    result = await call(
+        server, "wait_for_exchanges", filter="~d configuration.apple.com", timeout_ms=3000
+    )
     await task
 
     assert result["timed_out"] is False

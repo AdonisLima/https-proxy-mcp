@@ -127,9 +127,7 @@ class SystemProxyState:
         """
         if not self.web.configured and not self.secure.configured:
             return "no proxy configured"
-        address = (
-            f"{self.web.server or self.secure.server}:{self.web.port or self.secure.port}"
-        )
+        address = f"{self.web.server or self.secure.server}:{self.web.port or self.secure.port}"
         enabled = self.web.enabled or self.secure.enabled
         return f"{address} ({'enabled' if enabled else 'disabled'})"
 
@@ -286,9 +284,7 @@ class SystemProxy:
         return SystemProxyState(
             service=target,
             web=parse_proxy_setting(self._runner([NETWORKSETUP, "-getwebproxy", target])),
-            secure=parse_proxy_setting(
-                self._runner([NETWORKSETUP, "-getsecurewebproxy", target])
-            ),
+            secure=parse_proxy_setting(self._runner([NETWORKSETUP, "-getsecurewebproxy", target])),
             bypass=parse_bypass_domains(
                 self._runner([NETWORKSETUP, "-getproxybypassdomains", target])
             ),

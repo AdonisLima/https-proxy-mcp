@@ -161,8 +161,7 @@ class Simctl:
         if len(booted) > 1:
             raise LookupError(
                 "more than one simulator is booted, so which one to capture is ambiguous."
-                " Pass udid= to choose: "
-                + "; ".join(device.describe() for device in booted)
+                " Pass udid= to choose: " + "; ".join(device.describe() for device in booted)
             )
         return booted[0]
 

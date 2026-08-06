@@ -98,9 +98,7 @@ async def test_pinning_is_diagnosed_as_tls_failed_not_as_no_traffic(server, stat
     Requires a Scope, and the live P3 run is why; see the last section of this file.
     """
     trust_the_authority(tmp_path)
-    await state.start(
-        target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID
-    )
+    await state.start(target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID)
     state.store.record_tls_failure("api.bank.example", "certificate rejected by client")
 
     result = await call(server, "diagnose_capture")
@@ -239,18 +237,14 @@ async def test_the_system_install_is_a_separate_tool_from_the_simulator_one(serv
 async def test_starting_a_simulator_capture_passes_the_udid_through(server, state, tmp_path):
     trust_the_authority(tmp_path)
 
-    result = await call(
-        server, "start_capture", target="ios-simulator", port=0, udid=BOOTED_UDID
-    )
+    result = await call(server, "start_capture", target="ios-simulator", port=0, udid=BOOTED_UDID)
 
     assert result["trust"]["trusted"] is True
 
 
 async def test_the_session_manifest_records_the_device(server, state, tmp_path):
     """So a Session directory found later says which simulator it came from."""
-    result = await call(
-        server, "start_capture", target="ios-simulator", port=0, udid=BOOTED_UDID
-    )
+    result = await call(server, "start_capture", target="ios-simulator", port=0, udid=BOOTED_UDID)
     manifest = json.loads((tmp_path / "sessions" / result["session"] / "session.json").read_text())
 
     assert manifest["udid"] == BOOTED_UDID
@@ -291,9 +285,7 @@ async def test_pinning_in_the_app_under_test_is_still_reported(server, state, tm
     Scoped because an unscoped verdict is not trustworthy; see the last section of this file.
     """
     trust_the_authority(tmp_path)
-    await state.start(
-        target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID
-    )
+    await state.start(target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID)
     state.store.record(captured(host="api.example.com"))
     state.store.record_tls_failure("configuration.apple.com", "noise")
     state.store.record_tls_failure("api.bank.example", "certificate rejected by client")
@@ -309,9 +301,7 @@ async def test_a_scope_also_narrows_which_handshake_failures_matter(server, stat
     """A Scope is a statement about what the agent cares about. A host outside it failing is as
     irrelevant as a host outside it succeeding."""
     trust_the_authority(tmp_path)
-    await state.start(
-        target="ios-simulator", port=0, scope=["api.example.com"], udid=BOOTED_UDID
-    )
+    await state.start(target="ios-simulator", port=0, scope=["api.example.com"], udid=BOOTED_UDID)
     state.store.record(captured(host="api.example.com"))
     state.store.record_tls_failure("telemetry.vendor.example", "pinned")
 
@@ -402,9 +392,7 @@ async def test_a_scoped_capture_judges_pinning_on_the_hosts_it_was_given(server,
     """Inside a Scope the noise from other applications is excluded by construction, so a failure
     really is about the app under test."""
     trust_the_authority(tmp_path)
-    await state.start(
-        target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID
-    )
+    await state.start(target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID)
     state.store.record_tls_failure("discord.com", "unrelated desktop app")
     state.store.record_tls_failure("api.bank.example", "certificate rejected by client")
 

@@ -19,9 +19,7 @@ from https_proxy_mcp.correlate.timeline import Occurrence, build_timeline
 
 
 def step(start_ms: float, duration_ms: float, label: str, status: str = "passed", **kw) -> Step:
-    return Step(
-        t_start=start_ms / 1000, duration_ms=duration_ms, label=label, status=status, **kw
-    )
+    return Step(t_start=start_ms / 1000, duration_ms=duration_ms, label=label, status=status, **kw)
 
 
 def exch(

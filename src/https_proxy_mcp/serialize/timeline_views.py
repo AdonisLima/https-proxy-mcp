@@ -95,9 +95,7 @@ def _step_view(attribution: StepAttribution, detailed: bool = False) -> dict[str
     if attribution.owned:
         view["owned"] = [_occurrence_view(item, detailed) for item in attribution.owned]
     if attribution.overlapping:
-        view["overlapping"] = [
-            _occurrence_view(item, detailed) for item in attribution.overlapping
-        ]
+        view["overlapping"] = [_occurrence_view(item, detailed) for item in attribution.overlapping]
     if step.failed:
         view["explanation"] = _explain(attribution)
     return view
@@ -123,9 +121,7 @@ def _explain(attribution: StepAttribution) -> str:
             f"{'was' if len(outstanding) == 1 else 'were'} still in flight"
         )
 
-    failed = [
-        item for item in attribution.owned if item.status_code and item.status_code >= 400
-    ]
+    failed = [item for item in attribution.owned if item.status_code and item.status_code >= 400]
     if failed:
         return f"{step.label} follows {', '.join(_name(item) for item in failed[:3])}"
 

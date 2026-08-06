@@ -154,7 +154,7 @@ def test_pending_requests_are_capped_and_the_overflow_is_counted(store):
 
 
 def test_pending_requests_survive_close(store):
-    """"Two requests were still open when the Session ended" is information, not garbage. It is
+    """ "Two requests were still open when the Session ended" is information, not garbage. It is
     also the honest answer to "why did the assertion time out?"."""
     store.open(pending("a"))
 

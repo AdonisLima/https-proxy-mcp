@@ -62,9 +62,7 @@ def register_trust_tools(server: FastMCP, state: CaptureState) -> None:
         return {"target": target, "trusted": status.trusted, "detail": status.detail}
 
     @server.tool()
-    def install_authority(
-        target: str = "ios-simulator", udid: str | None = None
-    ) -> dict[str, Any]:
+    def install_authority(target: str = "ios-simulator", udid: str | None = None) -> dict[str, Any]:
         """Add the Interception Authority to a Capture Target's trust store.
 
         Called automatically by ``start_capture`` for simulators, so reach for it directly only

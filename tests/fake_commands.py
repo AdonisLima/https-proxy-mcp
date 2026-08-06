@@ -89,11 +89,7 @@ class FakeCommands:
     @property
     def mutations(self) -> list[list[str]]:
         """Only the commands that change the machine, stripped of the binary path."""
-        return [
-            argv[1:]
-            for argv in self.issued
-            if any(part.startswith("-set") for part in argv)
-        ]
+        return [argv[1:] for argv in self.issued if any(part.startswith("-set") for part in argv)]
 
     @property
     def sentinel_existed_at_first_mutation(self) -> bool:
