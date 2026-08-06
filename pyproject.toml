@@ -8,8 +8,21 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "mcp>=1.29.0",
-    "mitmproxy>=11",
+    # Both ceilings are load-bearing, and for a reason the lock file cannot cover: a wheel ships
+    # no lock, so a consumer resolves from these ranges alone.
+    #
+    # `<2` is not caution. mcp 2.0.0 removed `mcp.server.fastmcp` outright — there is no FastMCP
+    # under that path or any other — and it declares `Requires-Python: >=3.10`, so it is an
+    # eligible candidate on every interpreter this project supports. Uncapped, a clean install
+    # resolved it on 3.13 and the server died on import with ModuleNotFoundError; 3.12 escaped
+    # only through a warm cache, not through any constraint. Lifting this means porting to 2.x's
+    # replacement API, not relaxing a bound.
+    "mcp>=1.29.0,<2",
+    # The floor stays explicit: loosen it and resolution fails outright, backtracking to a
+    # release whose urwid uses `use_2to3`, which modern setuptools rejects. The ceiling is the
+    # same exposure as above rather than a known break — capture is written against mitmproxy 12's
+    # addon hooks and its filter expression language, and a major version is free to move both.
+    "mitmproxy>=11,<13",
 ]
 
 [project.scripts]
