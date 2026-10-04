@@ -35,9 +35,9 @@ from mcp.server.fastmcp.exceptions import ToolError
 from fake_commands import FakeCommands
 from https_proxy_mcp.capture.session import SESSIONS_DIRNAME
 from https_proxy_mcp.server import build_server, repair_before_serving
-from https_proxy_mcp.server.state import CaptureState
+from https_proxy_mcp.server.state import NOT_RECORDING, CaptureState
 from https_proxy_mcp.targets import build_target
-from https_proxy_mcp.targets.systemproxy import SENTINEL_NAME
+from https_proxy_mcp.targets.systemproxy import PS, SENTINEL_NAME
 from stub_runtime import StubRuntime
 from test_kill9_recovery import child_mutations, kill9, start_child
 from tool_calls import call
@@ -55,10 +55,15 @@ def real_process_table(commands: FakeCommands):
 
     Non-zero exits answer empty rather than raising, matching the child's own stub. Either way a
     start time that cannot be read means *unknown*, and unknown resolves to dead.
+
+    Matched against the module's own :data:`PS` rather than by suffix: this is the one branch here
+    that reaches the real machine, so an escape would be silent where every other one is loud, and
+    ``endswith("ps")`` would hand a future binary whose path merely ends in those letters straight
+    through.
     """
 
     def runner(argv, *, stdin=None):
-        if argv[0].endswith("ps"):
+        if argv[0] == PS:
             return subprocess.run(argv, capture_output=True, text=True, check=False).stdout
         return commands(argv, stdin=stdin)
 
@@ -147,20 +152,21 @@ def test_a_stop_leaves_a_live_holders_redirect_untouched(tmp_path, holder, comma
 # --- a window starting a Session ----------------------------------------------
 
 
-async def test_a_session_start_is_refused_while_a_live_holder_has_the_proxy(server, holder):
+async def test_the_refusal_names_the_holder_and_the_signal_that_releases_it(server, holder):
     """The second call site, and the one that has to refuse rather than tidy up.
 
-    Taking the redirect over is the original defect with better manners, and waiting for the
-    holder would hang a JSON-RPC session — which this project treats as the worst available
-    failure, for the same reason ``sudo`` here is always ``-n``.
+    Taking the redirect over is the original defect with better manners, and waiting for the holder
+    would hang a JSON-RPC session — which this project treats as the worst available failure, for
+    the same reason ``sudo`` here is always ``-n``. A diagnosis with no remedy is half an answer, so
+    the message names the process and the signal, because that is what makes the holder restore the
+    machine itself.
+
+    Asserted on the message rather than on the exception type, and that is why this test stands
+    alone. There *was* a sibling asserting only ``pytest.raises(ToolError)``, and it stayed green
+    with ``refuse_if_held()`` removed from ``prepare()`` — because FastMCP wraps any exception into
+    that one type and ``redirect()``'s older refusal was wrapped identically. It proved that
+    something refused, which was already true. See ``CLAUDE.md``.
     """
-    with pytest.raises(ToolError):
-        await server.call_tool("start_capture", {"target": "ios-simulator", "port": 0})
-
-
-async def test_the_refusal_names_the_holder_and_the_signal_that_releases_it(server, holder):
-    """A diagnosis with no remedy is half an answer. The remedy is a signal to the named process,
-    because that makes the holder restore the machine itself."""
     with pytest.raises(ToolError) as refusal:
         await server.call_tool("start_capture", {"target": "ios-simulator", "port": 0})
 
@@ -173,10 +179,11 @@ async def test_the_refusal_happens_before_anything_is_arranged(server, tmp_path,
 
     Refusing at ``prepare()`` is refusing before a Session exists. A refusal further along — and
     the machine has always had one, since ``redirect()`` will not overwrite a record — has already
-    created a Session directory and, worse, **pruned** the retained ones, which are the holder's:
-    two windows share the root, so a start this one never completed would have deleted the other
-    one's oldest artifacts. So the assertion is that nothing was created rather than only that
-    nothing was recorded.
+    created a Session directory and, worse, **run retention against the shared root**, which holds
+    the holder's Sessions: two windows share it, so a start this one never completed can delete the
+    other one's oldest artifacts. It deletes once the root holds more than ``RETAINED_SESSIONS``, so
+    the exposure is a real one on a machine that has been used rather than a certainty on every
+    start. So the assertion is that nothing was created rather than only that nothing was recorded.
     """
     before = record(tmp_path)
 
@@ -188,6 +195,27 @@ async def test_the_refusal_happens_before_anything_is_arranged(server, tmp_path,
     assert record(tmp_path) == before
     assert holder.poll() is None
     assert (await call(server, "get_status"))["recording"] is False
+
+
+async def test_the_refused_window_is_told_the_real_cause_when_it_asks_why(server, holder):
+    """The sixth verdict, at the moment it exists for.
+
+    ``start_capture`` has just been refused, so this window is not recording — and the answer it
+    used to get, "not recording; call start_capture first", sends the agent straight back into the
+    refusal it came from. The cause is on disk, is process-independent, and names a pid: an agent
+    that cannot be told it will guess, which is the whole reason this tool exists.
+    """
+    with pytest.raises(ToolError):
+        await server.call_tool("start_capture", {"target": "ios-simulator", "port": 0})
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["status"] == "proxy_held_elsewhere"
+    assert f"pid {holder.pid}" in result["detail"]
+    assert f"kill {holder.pid}" in result["remediation"]
+    # The old answer, absent rather than merely demoted: a verdict that names the holder and still
+    # says "call start_capture first" is two pieces of advice, one of which is a loop.
+    assert NOT_RECORDING not in result["detail"]
 
 
 async def test_no_tool_on_the_surface_releases_a_redirect_this_process_does_not_own(

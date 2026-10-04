@@ -1,9 +1,11 @@
 """Tests for diagnose_capture and the three trust tools, through FastMCP's own dispatch.
 
 SPEC.md calls `diagnose_capture` the highest-value tool in the set and notes it is absent from
-all surveyed prior art: three very different causes present identically as "no traffic", and an
-agent that cannot tell them apart guesses. So these tests care less about the envelope than
-about whether each cause reaches the right status with a remediation that can be acted on.
+all surveyed prior art: very different causes present identically as "no traffic", and an
+agent that cannot tell them apart guesses. Deliberately uncounted here — the count belongs where a
+test pins it to `DiagnosisStatus`, and this file is not one of those places. So these tests care
+less about the envelope than about whether each cause reaches the right status with a remediation
+that can be acted on.
 
 The trust tools carry a deliberate asymmetry (SPEC.md, "Trust"). A simulator's trust store is
 per-device, disposable, needs no privilege and is wiped by `simctl erase`, so installing there
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -74,6 +77,94 @@ async def test_a_curl_session_diagnoses_ok(server, state):
     assert result["status"] == "ok"
 
 
+async def test_every_diagnosis_reports_the_same_keys_whether_or_not_a_session_exists(
+    server, state, tmp_path
+):
+    """One shape, so a caller can read a field without first working out which branch answered.
+
+    The not-recording branches omitted ``target``, which the recording branch carries and the
+    reference documents — and ``proxy_held_elsewhere`` is the first verdict an agent is likely to
+    meet in that shape, because it is reached from a refused ``start_capture``. A ``KeyError`` in
+    the branch that exists to say something is wrong is how an agent concludes nothing is wrong.
+
+    Three branches rather than two, because "not recording" is two separate returns and only one
+    of them was reached here: dropping ``target`` from the held branch left the whole suite green.
+    That is the branch an agent meets while following a remediation, so it is the more expensive
+    of the two to get wrong. Its status is asserted as well, since a sentinel written where
+    nothing reads it would exercise the *other* not-recording branch twice and still pass.
+    """
+    sentinel = tmp_path / "proxy-state.json"
+    write_sentinel(sentinel, {"pid": os.getpid() + 1, "started": PROCESS_START.strip()})
+    held = await call(server, "diagnose_capture")
+    sentinel.unlink()
+
+    before = await call(server, "diagnose_capture")
+    await state.start(target="curl", port=0, scope=None)
+
+    assert held["status"] == "proxy_held_elsewhere"
+    assert set(held) == set(before) == set(await call(server, "diagnose_capture"))
+
+
+async def test_the_held_proxy_verdict_does_not_name_a_session_that_does_not_exist(server, tmp_path):
+    """The branch is entered only when nothing is recording here, so it has no Session to name.
+
+    It borrowed ``get_status``'s sentence for the same ownership state, which reads "This Session
+    does not own it, so stopping here leaves it in place" — and "stopping here" names a call that
+    would raise ``NOT_RECORDING``. CONTEXT.md's Session has a precise meaning and there is none
+    here; this branch exists because the tool was saying things that were not so.
+    """
+    holder = os.getpid() + 1
+    write_sentinel(tmp_path / "proxy-state.json", {"pid": holder, "started": PROCESS_START.strip()})
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["status"] == "proxy_held_elsewhere"
+    # The whole noun, not its capitalisation: lowercasing the claim would leave it just as wrong.
+    assert "Session" not in result["detail"]
+    assert "stopping here" not in result["detail"]
+    # The actionable half is the reason the verdict exists, so it is asserted in the same breath:
+    # dropping the wrong clause must not take the pid and the remedy with it.
+    assert f"pid {holder}" in result["detail"]
+    assert f"kill {holder}" in result["remediation"]
+
+
+async def test_the_held_proxy_verdict_promises_only_that_the_refusal_lifts(server, tmp_path):
+    """Releasing the holder removes *this* refusal. It does not boot a simulator or arrange trust,
+    so "after which start_capture here succeeds" is a stronger promise than the code can keep —
+    and this branch is reached by an agent following a remediation, which is the worst place to
+    over-promise."""
+    write_sentinel(
+        tmp_path / "proxy-state.json",
+        {"pid": os.getpid() + 1, "started": PROCESS_START.strip()},
+    )
+
+    result = await call(server, "diagnose_capture")
+
+    assert "succeeds" not in result["remediation"]
+    assert "no longer applies" in result["remediation"]
+
+
+async def test_the_held_proxy_verdict_resolves_ownership_once(server, tmp_path, commands):
+    """Two reads of one fact, and the holder could exit between them.
+
+    The verdict asked who the holder was and then asked again to compose the sentence, so a holder
+    that exited in between produced ``proxy_held_elsewhere`` carrying the *dead owner* sentence —
+    an answer that contradicts itself. Counted through the runner, which is the only place the
+    second read was visible from.
+    """
+    write_sentinel(
+        tmp_path / "proxy-state.json",
+        {"pid": os.getpid() + 1, "started": PROCESS_START.strip()},
+    )
+
+    await call(server, "diagnose_capture")
+
+    reads = [argv for argv in commands.issued if argv[0].endswith("ps")]
+
+    assert reads != [], "ownership was never resolved at all, so this proved nothing"
+    assert len(reads) == 1
+
+
 async def test_an_untrusted_simulator_is_diagnosed_as_such(server, state, tmp_path):
     await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
 
@@ -121,6 +212,36 @@ async def test_traffic_hidden_by_the_scope_is_diagnosed_out_of_scope(server, sta
     result = await call(server, "diagnose_capture")
 
     assert result["status"] == "out_of_scope"
+
+
+async def test_a_scoped_session_is_told_that_passthrough_may_be_the_reason(server, state, tmp_path):
+    """The Session's own setting reaching the verdict, through the whole chain rather than as an
+    argument handed to the target by a test.
+
+    This is the call an agent makes when `wait_for_exchanges` timed out on a host it did not put in
+    the Scope. Under Passthrough that host was never decrypted, so the wait could only ever time
+    out — and "nothing arrived" on its own reads as "the app made no request".
+    """
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=["api.example.com"], udid=BOOTED_UDID)
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["status"] == "no_connect"
+    assert "not evidence" in result["detail"]
+    assert result["observed"]["passthrough"] is True
+
+
+async def test_an_unscoped_session_says_nothing_about_passthrough(server, state, tmp_path):
+    """Inert without a Scope, and silent about itself when inert: everything through the proxy was
+    intercepted, so an empty listing means what it has always meant."""
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
+
+    result = await call(server, "diagnose_capture")
+
+    assert "Passthrough" not in result["detail"]
+    assert result["observed"]["passthrough"] is False
 
 
 async def test_the_diagnosis_reports_the_counts_it_reasoned_from(server, state, tmp_path):
@@ -391,8 +512,13 @@ async def test_an_unscoped_capture_still_mentions_the_failures_and_how_to_judge_
 
 
 async def test_a_scoped_capture_judges_pinning_on_the_hosts_it_was_given(server, state, tmp_path):
-    """Inside a Scope the noise from other applications is excluded by construction, so a failure
-    really is about the app under test."""
+    """Inside a Scope the noise from other applications talking to *other* hosts is excluded by
+    construction, which is what makes the verdict worth reporting at all.
+
+    It is not enough to make the verdict about the app: another client on this same Mac talking
+    to an in-scope host is still counted, because every client reaches the proxy over loopback.
+    That is what the next test is about.
+    """
     trust_the_authority(tmp_path)
     await state.start(target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID)
     state.store.record_tls_failure("discord.com", "unrelated desktop app")
@@ -403,6 +529,29 @@ async def test_a_scoped_capture_judges_pinning_on_the_hosts_it_was_given(server,
     assert result["status"] == "tls_failed"
     assert result["observed"]["tls_failures"] == 1
     assert result["observed"]["tls_failures_total"] == 2
+
+
+async def test_the_tls_failed_verdict_an_agent_reads_admits_the_count_is_machine_wide(
+    server, state, tmp_path
+):
+    """The unit test pins the string; this pins what actually crosses the tool boundary, which is
+    the only text an agent ever sees.
+
+    Reproduced on 2026-08-18: one unrelated client on this Mac making one request to an in-scope
+    host flipped a healthy capture to `tls_failed`, naming a device that was working perfectly.
+    The Scope narrows hosts, not clients, and nothing can narrow clients — loopback leaves no peer
+    address to tell them apart.
+    """
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=["api.bank.example"], udid=BOOTED_UDID)
+    state.store.record_tls_failure("api.bank.example", "certificate rejected by client")
+
+    result = await call(server, "diagnose_capture")
+
+    assert result["status"] == "tls_failed"
+    assert "even though" not in result["detail"].lower()
+    assert "machine-wide" in result["detail"].lower()
+    assert "if the failures are the app's" in result["remediation"].lower()
 
 
 # --- get_status reports the proxy state ---------------------------------------
@@ -447,6 +596,19 @@ async def test_status_reports_the_proxy_even_when_nothing_is_recording(server, t
     assert result["proxy"]["service"] == "Wi-Fi"
 
 
+async def test_the_usage_guide_names_every_key_the_proxy_report_returns(server, tmp_path):
+    """The redirect report is what answers "is my machine still proxied, and by whom?", and it is
+    the one report a developer reads rather than an agent. A key the reference never shows is a key
+    nobody looks for — the owner most of all, because it is what decides whether ``stop_capture``
+    will fix anything."""
+    usage = (Path(__file__).resolve().parent.parent / "docs" / "USAGE.md").read_text()
+    write_sentinel(tmp_path / "proxy-state.json", {"pid": 4242, "started": PROCESS_START.strip()})
+
+    reported = await call(server, "get_status")
+
+    assert sorted(key for key in reported["proxy"] if f'"{key}"' not in usage) == []
+
+
 async def test_status_names_the_owner_and_says_when_it_is_this_process(server, state, tmp_path):
     """An agent's next move depends entirely on this: stop_capture fixes a redirect we own and
     nothing else."""
@@ -473,6 +635,34 @@ async def test_status_does_not_promise_to_restore_a_redirect_this_process_does_n
     assert result["proxy"]["owner"] == {"pid": holder, "ours": False}
     assert "will be restored to server=" not in result["proxy"]["detail"]
     assert str(holder) in result["proxy"]["detail"]
+
+
+async def test_status_names_this_session_as_the_one_that_does_not_own_it_while_recording(
+    server, state, tmp_path
+):
+    """The other arm of the same sentence, and the one that has a Session to name.
+
+    "This Session does not own it, so stopping here leaves it in place" is true here and false in
+    the branch above, where there is no Session and ``stop_capture`` would raise — which is why
+    the sentence branches at all. Only the no-Session arm was pinned, so the condition could be
+    inverted and caught in one direction: this Session would be told nothing here owns the
+    redirect while it is the one thing that might, and ``stop_capture`` would look like a no-op.
+
+    Reachable with ``curl``, which arranges no routing of its own, so the sentinel it finds can
+    only be the other process's.
+    """
+    holder = os.getpid() + 1
+    write_sentinel(tmp_path / "proxy-state.json", {"pid": holder, "started": PROCESS_START.strip()})
+    await state.start(target="curl", port=0, scope=None)
+
+    result = await call(server, "get_status")
+
+    assert result["recording"] is True
+    assert result["proxy"]["owner"] == {"pid": holder, "ours": False}
+    assert "This Session does not own it" in result["proxy"]["detail"]
+    # The remedy travels with the claim: the sentence is only worth branching if it still says
+    # what to do about the holder either way.
+    assert f"kill {holder}" in result["proxy"]["detail"]
 
 
 async def test_status_reports_a_redirect_left_behind_by_a_process_that_is_gone(server, tmp_path):

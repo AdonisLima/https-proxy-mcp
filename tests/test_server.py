@@ -9,11 +9,13 @@ import re
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as distribution_version
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
 from https_proxy_mcp import __version__, build_server
 from https_proxy_mcp.server import SERVER_NAME
+from https_proxy_mcp.targets.base import DiagnosisStatus
 from https_proxy_mcp.version import UNKNOWN_VERSION, resolve_version
 
 #: Every tool the v1 read-only surface registers. Asserted exactly rather than by subset, so
@@ -167,6 +169,41 @@ def test_the_skill_names_every_registered_tool():
     assert sorted(tool for tool in REGISTERED_TOOLS if tool not in skill) == []
 
 
+def test_the_skill_names_every_parameter_start_capture_takes():
+    """The one tool whose parameters decide what the whole Session does.
+
+    A parameter the skill omits is a capability an agent never reaches for — and ``passthrough``
+    is worse than that, because its default *changes what is captured*. An agent that does not
+    know the word cannot explain an empty listing and cannot turn it off.
+    """
+    skill = SKILL.read_text()
+
+    for parameter in ("target", "port", "scope", "udid", "passthrough"):
+        assert parameter in skill, parameter
+
+
+def test_the_skill_lists_every_verdict_the_diagnosis_can_return():
+    """Backticked, for the same reason the guide's check is: ``ok`` occurs inside ordinary words.
+
+    The skill is the copy that leaves this repository — it is installed standalone on another
+    machine — so a verdict it omits is one an agent meets in a result with nowhere to look it up.
+    """
+    skill = SKILL.read_text()
+
+    missing = [verdict for verdict in get_args(DiagnosisStatus) if f"`{verdict}`" not in skill]
+
+    assert sorted(missing) == []
+
+
+def test_the_skill_carries_no_relative_link_into_this_repository():
+    """It is copied to ``~/.claude/skills/https-proxy-mcp/SKILL.md`` on any machine, where every
+    path in this repository resolves to nothing. A relative link is therefore a defect rather than
+    a style preference, which is why it is asserted rather than reviewed."""
+    links = re.findall(r"]\((\.{1,2}/[^)]*)\)", SKILL.read_text())
+
+    assert links == []
+
+
 # --- the guides ---------------------------------------------------------------
 #
 # USAGE.md documents every tool's parameters, which is the single most rot-prone thing written about
@@ -216,6 +253,66 @@ async def test_the_usage_guide_gets_every_parameter_name_right(tools):
     }
 
     assert wrong == {}
+
+
+async def test_the_usage_guide_lists_every_verdict_the_diagnosis_can_return(tools):
+    """The verdicts are a closed set in the code and prose everywhere else, which is where one gets
+    left behind. A verdict the reference omits is one a reader meets in a result and cannot look up,
+    and its remediation is the only reason the verdict exists.
+
+    Both the guide and the tool's own description are checked, because they are read by different
+    audiences: the guide by the developer, the description by the agent choosing what to call.
+    """
+    usage = USAGE.read_text()
+    described = next(tool.description or "" for tool in tools if tool.name == "diagnose_capture")
+    verdicts = get_args(DiagnosisStatus)
+
+    # Backticked rather than bare, because `ok` is a substring of "look", "token" and "book": the
+    # bare form is sharp for the five distinctive names and vacuous for the sixth, which is exactly
+    # the one a reader is likeliest to meet.
+    assert sorted(verdict for verdict in verdicts if f"`{verdict}`" not in usage) == []
+    assert sorted(verdict for verdict in verdicts if f"`{verdict}`" not in described) == []
+
+
+#: Counts written as words, so prose that counts something can be coupled to the thing it counts.
+NUMBER_WORDS = {3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight"}
+
+#: Any of those words in front of "causes", which is the *other* convention this set was counted
+#: by. Two conventions for one closed set is worse than either — a reader who meets both cannot
+#: tell which set is meant, and the two differ by exactly ``ok``.
+COUNTED_CAUSES = re.compile(
+    rf"({'|'.join(NUMBER_WORDS.values())})\s+(?:very different\s+)?causes", re.IGNORECASE
+)
+
+SRC = Path(__file__).resolve().parent.parent / "src" / "https_proxy_mcp"
+
+#: The module whose docstring and ``diagnose`` both enumerate the verdicts in prose.
+IOS_TARGET = SRC / "targets" / "ios_simulator.py"
+
+#: Where the verdicts are *declared*, and the one place a reader looks up what a verdict is. Its
+#: docstring counted them too, and said "three" from v1 until it was added here — the count was
+#: stale through two widenings because nothing coupled it to the type three lines below it.
+BASE_TARGET = SRC / "targets" / "base.py"
+
+
+async def test_every_place_that_counts_the_verdicts_counts_the_ones_the_type_declares(tools):
+    """One closed set, one count, one noun.
+
+    The verdicts were counted in two conventions at once — "five very different causes", which
+    excludes ``ok``, and "the six causes", which includes it — so a reader who met both could not
+    tell which set was meant. Settled on **verdicts**, counted from
+    ``get_args(DiagnosisStatus)``, which is the only definition there is. The second assertion is
+    what retires the other convention rather than merely outnumbering it.
+    """
+    expected = f"{NUMBER_WORDS[len(get_args(DiagnosisStatus))]} verdicts"
+    described = next(tool.description or "" for tool in tools if tool.name == "diagnose_capture")
+
+    for text in (USAGE.read_text(), described, IOS_TARGET.read_text(), BASE_TARGET.read_text()):
+        # Wrapping collapsed first: all three of these are hard-wrapped prose, and where the break
+        # falls in "six verdicts" is not what is under test.
+        flat = re.sub(r"\s+", " ", text).lower()
+        assert expected in flat
+        assert COUNTED_CAUSES.search(flat) is None
 
 
 def test_the_install_guide_covers_the_things_that_actually_go_wrong():

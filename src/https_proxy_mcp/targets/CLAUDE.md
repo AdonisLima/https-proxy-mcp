@@ -24,6 +24,32 @@ running against the real thing, and several of these passed every test while bei
   the name `networksetup` accepts.
 - **`networksetup` proxy changes need no `sudo`** for a user in the `admin` group, and do not
   prompt. Verified by setting the already-off state to off.
+- **`curl` cannot verify anything about the macOS system proxy.** It honours `http_proxy` /
+  `https_proxy` and ignores the system-proxy dictionary entirely, so it reaches an API directly and
+  reports it healthy while every GUI application on the machine is routed at a dead port. That
+  asymmetry is what made the original field report look like an application bug and cost four wrong
+  hypotheses. To check what the machine is actually doing, use `scutil --proxy`, or a client that
+  reads the system configuration. This is also why the repository's own quick-start uses `curl -x`
+  explicitly rather than relying on routing.
+- **A start time read for the sentinel's owner is compared, never parsed.** `ps -o lstart= -p <pid>`
+  returns an opaque padded string and exits non-zero for a process that is gone. Two rules follow and
+  both are load-bearing: an *unreadable* start time means **unknown**, and unknown resolves to
+  **dead**, so repair proceeds and connectivity is restored; and empty must never compare equal to
+  empty, or two unrelated processes look like one. The reason the field exists at all is process-id
+  reuse across a reboot — with a liveness check alone, a record that outlives a restart names an id
+  now belonging to something unrelated, liveness says "alive", the repair is declined, and a
+  self-healing bug becomes permanent.
+- **The machine bypasses the proxy for local-subnet addresses, and nothing says so.**
+  `-getproxybypassdomains` answers "There aren't any bypass domains set" while a request to this
+  machine's own LAN address goes direct. A redirect being in place is therefore not evidence that
+  a given request will be captured, and a test pointing a device at a listener on the host will
+  never see that request in the proxy. Measured: the listener accepted the connection, `pending`
+  stayed empty, and an `https://example.com/` control in the same Session was captured. An address
+  outside the local subnet goes through — RFC 5737's documentation range is the useful one, being
+  reserved and unroutable, so a request to it stays pending for as long as you need.
+- **A record that cannot be parsed outranks ownership.** Ownership cannot be read out of something
+  that will not parse, so the existing fail-safe stands: switch both proxies off and move the file
+  aside. Fidelity is already lost at that point; connectivity is not.
 
 ## CoreSimulator and trust
 
@@ -47,6 +73,18 @@ running against the real thing, and several of these passed every test while bei
 - **`install_authority_system` must use `sudo -n`.** An interactive prompt hangs the whole
   session — the mechanism is in `../server/CLAUDE.md`. A test asserts every `sudo` call carries
   `-n`.
+- **The TLS-failure count is machine-wide and no version of it can be per-client.** Every client
+  reaches the proxy over loopback, so the peer address separates nothing: a simulator, a second
+  simulator and the developer's browser are the same address. A Scope narrows **hosts, not
+  clients** — another client on this Mac talking to a host you named is counted too, and *one*
+  such request is enough to flip a healthy capture to `tls_failed`. Reproduced as a negative
+  control: leg A drove the real app on a trusting device (`ok`, `tls_failures: 0`), leg B ran a
+  single `urllib.request.urlopen` against the same in-scope host, and the verdict flipped and
+  named the device that was working. This is not hypothetical damage — it is how this repository
+  came to record the app under test as certificate-pinned when it is not, a claim that then
+  reached five documents. So `tls_failed` states the count is machine-wide in the sentence
+  itself, and offers pinning as the leading candidate rather than as fact. Three tests go red if
+  either claim is tightened back; do not tighten them.
 
 ## Barely covered by a test
 

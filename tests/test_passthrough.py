@@ -196,6 +196,25 @@ async def test_an_unscoped_runtime_leaves_the_engine_intercepting_everything(sto
         assert options_of(runtime).allow_hosts == []
 
 
+@pytest.mark.integration
+async def test_the_engine_is_never_told_to_retain_passed_through_connections(store, confdir):
+    """Why `diagnose_capture` deduces Passthrough rather than measuring it.
+
+    mitmproxy builds an ignored connection as ``TCPLayer(context, ignore=not show_ignored_hosts)``,
+    so there *is* an option that would let the addon see them — and its own help warns that it will
+    keep every ignored connection's contents in memory, "which can greatly increase memory usage".
+    On a machine-wide proxy that is the whole machine's traffic buffered inside this server, which
+    is the one thing Passthrough exists to stop this tool doing. So it stays off, nothing counts a
+    passed-through connection, and the diagnosis says only what it can honestly infer.
+
+    (Paraphrased rather than quoted whole, because the word that help uses for a connection is the
+    one CONTEXT.md exists to keep out of this repository. Checked word for word against
+    ``Options()._options["show_ignored_hosts"].help``.)
+    """
+    async with started(store, confdir, intercept_hosts=("localhost",)) as runtime:
+        assert options_of(runtime).show_ignored_hosts is False
+
+
 # --- the certificate the client saw --------------------------------------------
 
 

@@ -30,6 +30,20 @@ not look like breakage.
   other browse tool. Found by writing the guide, not by reading the code.
 - **`list_exchanges` must never be able to return bodies.** There is no parameter that would do
   it, deliberately — that is the API enforcing what guidance cannot.
+- **FastMCP wraps *any* exception a tool raises into a `ToolError`.** So
+  `pytest.raises(ToolError)` on the tool surface cannot tell your new refusal from one the code
+  already had, and a test that asserts only the type stays green when the thing it exists to prove is
+  deleted. Measured: removing `refuse_if_held()` from `IosSimulatorTarget.prepare()` left such a test
+  passing, because `redirect()`'s pre-existing refusal was wrapped identically — and removing the
+  explicit `ProxyHeldElsewhereError` → `ToolError` translation in `CaptureState.start` left the
+  client-visible message byte-identical. Assert on the **message** (a pid, a remedy) or on a side
+  effect, and treat the explicit translation as insurance against an SDK that stops wrapping rather
+  than as something a test pins.
+- **A diagnosis must answer with the same keys from every branch.** The two not-recording branches
+  omitted `target` while the recording branch carried it, so a caller reading it got a `KeyError`
+  from exactly the branches that exist to say something is wrong — which is how an agent concludes
+  nothing is wrong. `proxy_state()` had the same shape hole in its unparseable-record branch. Both
+  now report null rather than nothing.
 
 `server._mcp_server.version` is assigned after construction because `FastMCP.__init__` takes no
 `version` and the low-level server it wraps reads its own mutable attribute when building the

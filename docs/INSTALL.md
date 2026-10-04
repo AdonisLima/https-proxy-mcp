@@ -161,26 +161,43 @@ the device. You do not call `install_authority` yourself unless something wiped 
 **Pass `udid` whenever more than one simulator is booted.** Guessing would capture the wrong app's
 traffic and report success, so the server refuses to guess.
 
-**Set `scope` to your app's hosts.** It is not just noise reduction: certificate pinning can only
-be attributed inside a scope, so without one `diagnose_capture` will not report pinning. See
-[USAGE.md](./USAGE.md#when-nothing-appears).
+**Set `scope` to your app's hosts.** It does two things beyond noise reduction, and both matter more
+than the filtering:
+
+- With `passthrough` left on (the default), a `scope` is also the set of hosts whose **HTTPS gets
+  decrypted**. Everything else on the machine is forwarded untouched, so your browser and any other
+  booted simulator keep working. Name no scope and every HTTPS connection on the Mac is served a
+  certificate that only the one named simulator trusts — which is a browser full of certificate
+  warnings and every other simulator offline.
+- Certificate pinning can only be attributed inside a scope, so without one `diagnose_capture` will
+  not report pinning.
+
+See [USAGE.md](./USAGE.md#when-nothing-appears).
 
 ### What this changes on your Mac, and how it comes back
 
 CoreSimulator has no proxy setting of its own — it inherits the host's. So capture redirects the
-**machine's** system proxy, affecting every application until `stop_capture`.
+**machine's** system proxy, affecting every application until `stop_capture`. A `scope` is what
+keeps that from hurting; see above.
 
 Restoration is a three-layer guarantee: your prior settings are written to
 `~/.https-proxy-mcp/proxy-state.json` before anything changes, restored by exit handlers, and
 restored by the next server start if this one is killed outright. `get_status` reports whether the
-proxy is currently redirected.
+proxy is currently redirected — whether or not it is *this* server that is recording — and names the
+process that redirected it.
 
-Expect, and do not report as bugs: your other apps' TLS handshakes failing against the proxy (they
-have no reason to trust a certificate installed only into the simulator), and `diagnose_capture`
-declining to name pinning without a `scope`.
+**Only one process may hold that redirect.** Every editor window runs its own copy of this server
+against that one file, so `start_capture` is refused, naming the holder's pid, while another live
+process holds it. `kill <pid>` makes that process put your machine back on its way out; nothing here
+force-releases someone else's redirect.
 
-If a crash ever leaves the machine proxied and the next start cannot repair it, see
-[HANDOFF.md](../HANDOFF.md#manual-recovery) — four `networksetup` commands.
+Expect, and do not report as bugs: with **no** `scope`, your other apps' TLS handshakes failing
+against the proxy (they have no reason to trust a certificate installed only into the simulator);
+and `diagnose_capture` declining to name pinning without a `scope`.
+
+If a crash ever leaves the machine proxied and the next start cannot repair it, the runbook is
+[.claude/skills/live-machine-tests/](../.claude/skills/live-machine-tests/SKILL.md) — four
+`networksetup` commands.
 
 ### Trusting the authority outside a simulator
 

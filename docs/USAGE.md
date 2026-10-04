@@ -43,10 +43,18 @@ Timeline.
   "target": "curl",
   "scope": null,
   "passthrough": false,
+  "lens": null,
   "session_dir": "…/sessions/20260805T232937-174020",
-  "trust": { "trusted": true, "detail": "nothing to trust: curl is pointed at the proxy with -x, …" }
+  "trust": { "trusted": true, "detail": "nothing to trust: curl is pointed at the proxy with -x, …" },
+  "devices_booted": 0,
+  "devices_trusting_authority": 0,
+  "devices_note": null
 }
 ```
+
+`devices_note` is non-null only when a booted device *other than* this Session's Capture Target
+trusts the Interception Authority. That device's traffic to in-scope hosts is decrypted into this
+Session too, and nothing at the proxy distinguishes it — see [A `lens`](#a-lens-when-the-host-cannot-tell-them-apart).
 
 Pass `port=0` to have one chosen and reported back, which is the right default when you do not care.
 
@@ -272,8 +280,7 @@ looping on this.
 
 ## Cutting the noise
 
-Capture is **unconditional** — everything through the proxy is recorded. Reporting is narrowed, in
-this order:
+Reporting is narrowed, in this order:
 
 1. **The Run window.** Anything outside it cannot pollute that Run's Timeline. Narrowed by
    intersection, not by start time, so a request already in flight when the Run began is included —
@@ -285,24 +292,94 @@ this order:
    boundaries, so `apple.com` covers `gs-loc.apple.com` but not `notapple.com`. Deliberately
    conservative — `googleapis.com` is **not** denied, because for many apps that is the backend.
 3. **Your `scope`**, if you set one.
+4. **Your `lens`**, if you set one — a filter expression, applied to everything else.
 
-`include_denied=true` on any listing shows what was removed; `hidden` always says how many.
+`include_denied=true` on any listing puts the **denylist's** rows back. It does not lift your
+`scope`, which is what you asked for rather than what this tool assumed — widen that by starting a
+new Session. `hidden` always says how many rows the two removed together.
 
 Two tools are **exempt** from the denylist and Scope: `wait_for_exchanges` and `get_exchange`. Both
 are explicit — a filter naming a host, or an id that came from somewhere — and letting the denylist
 veto a wait would turn "wait for this request" into a timeout reporting that it never happened.
+The Lens is the exception: `wait_for_exchanges` **does** obey it, and only `get_exchange` is exempt
+from all four. See below for why.
+
+### A `lens`: when the host cannot tell them apart
+
+A `scope` separates traffic by **host**. Sometimes there is no host that separates it. The case
+that forces this: **two iOS Simulators booted on one Mac, running the same app against the same
+backend.** CoreSimulator has no proxy setting of its own, so both are routed through the one
+capture proxy; an Exchange records the address it was *going to*, never the one it came *from*; and
+`get_timeline` attributes by time. So the other simulator's requests appear inside your Run's
+window and are reported as your Step's overlapping traffic — a causal claim about a request you
+did not make.
+
+Neither `scope` nor `passthrough` helps, because both narrow by host and the hosts are the same.
+
+A `lens` does, by not inferring anything. Have each build stamp a header on its own requests, and
+name it once:
+
+```
+start_capture(target="ios-simulator", udid="F48AAE9F-…", scope=["api.example.com"],
+              lens='~hq "X-Sim: sidekick"')
+```
+
+**Quote any value with a space in it.** `~hq X-Sim: sidekick` unquoted still *parses*, and then
+matches nothing — a Lens that silently hides everything is much worse than one that is refused.
+
+- It is set **on the Session**, not per call, so `get_timeline`, `list_exchanges`,
+  `search_exchanges`, `tail_exchanges` and `wait_for_exchanges` all obey it. A narrowing you have
+  to remember on each call is the one you forget on the call that mattered.
+- `wait_for_exchanges` is **not** exempt from it, though it is exempt from the Scope. The
+  exemption's reasoning is that naming a host in a filter is explicit and should not be vetoed;
+  a Lens says which *client* the traffic came from, and a wait that ignored it is answered by the
+  other simulator's login.
+- `get_exchange` **is** exempt. An id came from somewhere.
+- It cannot narrow a **TLS handshake failure count** or a **pending** request. Neither is an
+  Exchange, so there is nothing to test the expression against. The `tls_failed` count stays
+  machine-wide, exactly as `diagnose_capture` says.
+- Choose the polarity deliberately. `~hq "X-Sim: sidekick"` **excludes** anything unheadered —
+  traffic from an SDK that does not use your HTTP client. `!(~hq "X-Sim: main")` keeps it. The first
+  risks missing a cause; the second risks importing one. A tight `scope` shrinks the difference to
+  near nothing, because unheadered third-party traffic is usually to a host you never named.
+- A bad expression is refused by `start_capture`, before anything on the machine is changed.
+
+The other half of that setup is trust: the Interception Authority is installed into **one** device,
+so the other simulator's HTTPS to an in-scope host fails its handshake and its app breaks. Install
+it there too with `install_authority(udid=…)`. `start_capture` and `diagnose_capture` then report
+`devices_trusting_authority`, because the cost of doing so — that device's bodies land unredacted
+in this Session's directory — is otherwise invisible.
+
+### What a `scope` narrows besides reporting
+
+With `passthrough` left on, a `scope` also decides which hosts get **decrypted**, so this section's
+narrowings are no longer the whole story:
+
+- An **HTTPS** host outside the `scope` was forwarded without being opened. It is not hidden, it was
+  never captured, and `get_exchange` cannot fetch what does not exist. That is the accepted cost of
+  leaving the developer's browser and every other simulator alone, and `diagnose_capture` says so
+  when a listing comes back empty. Recover by restarting with a wider `scope`, or with
+  `passthrough=false`.
+- A **plain HTTP** host outside the `scope` was captured anyway. Passthrough covers TLS only: the
+  proxy has to decide whether to open a connection before a plain HTTP request has named its
+  destination, and only a `CONNECT` authority and a TLS SNI arrive early enough to test. So those
+  rows are hidden by the `scope` in the ordinary way and `get_exchange` still fetches them by id.
+
+The distinction matters because the two look identical in a listing and have opposite remedies:
+one needs a new Session, the other needs an id.
 
 ## When nothing appears
 
-**Call `diagnose_capture` before concluding there was no traffic.** Four very different causes
-present identically from the outside, and this is the only tool that tells them apart:
+**Call `diagnose_capture` before concluding there was no traffic.** Six verdicts, and everything but
+`ok` presents identically from the outside. This is the only tool that tells them apart:
 
 | Verdict | Means | Do |
 |---|---|---|
+| `proxy_held_elsewhere` | The Mac's proxy is redirected by **another** https-proxy-mcp process that is still running, so the machine's traffic is going to its capture port | `kill <pid>` the process it names — that makes it restore the machine on its way out, after which this refusal no longer applies. `start_capture` still needs a booted device and a trusted authority, and says so if either is missing |
 | `no_connect` | Nothing reached the proxy | Check routing, that the simulator is booted, or that the app has made a request at all |
 | `untrusted_authority` | The device does not trust the authority, so TLS fails before a request exists | `install_authority` |
-| `tls_failed` | Handshakes failing *even though* the authority is trusted | Certificate pinning, not a setup mistake. Pinned release builds are out of scope |
-| `out_of_scope` | Traffic was captured; your Scope or the denylist reported none of it | Widen `scope`, or pass `include_denied=true` |
+| `tls_failed` | Handshakes failing while the authority is trusted. The count is **machine-wide**: every client reaches the proxy over loopback, so it cannot say which one failed | Certificate pinning is the leading candidate, and a correctly-pinned release build is out of scope. Rule out the cheaper cause first — another simulator or a browser on this Mac reaching an in-scope host fails identically, because only the capture target was given the Authority |
+| `out_of_scope` | Traffic was captured; your Scope or the denylist reported none of it | Widen `scope` for a new Session, or pass `include_denied=true` for the denylist's rows |
 | `ok` | Exchanges are arriving | — |
 
 It shows the counts the verdict came from, so the reasoning can be checked rather than taken on
@@ -314,9 +391,22 @@ faith:
   "detail": "curl needs no routing or trust setup; if no Exchanges are appearing, check that curl was given -x http://127.0.0.1:<port>",
   "remediation": null,
   "target": "curl",
-  "observed": { "exchanges": 1, "reported": 1, "tls_failures": 0, "tls_failures_total": 0, "tls_failure_hosts": [] }
+  "observed": { "exchanges": 1, "reported": 1, "tls_failures": 0, "tls_failures_total": 0, "tls_failure_hosts": [], "passthrough": false }
 }
 ```
+
+Every verdict answers with those same keys. When nothing is recording, `target` is `null` and the
+counts are zero — which is worth knowing because `proxy_held_elsewhere` is normally met in exactly
+that state, having arrived from a refused `start_capture`.
+
+`no_connect` and `out_of_scope` say one more thing when `observed.passthrough` is true: only the
+Scope's hosts had their HTTPS decrypted, so an HTTPS connection to any other host was forwarded
+without being opened and could never have been recorded — an empty result is **not** evidence that
+the app made no request. That is deduced from your `scope`, not measured: nothing counts a
+passed-through connection, deliberately. To capture such a host over HTTPS, restart with a Scope
+that names it, or with `passthrough=false`. Plain HTTP is the exception the same sentence names: it
+is captured from every host, so a plain-HTTP row is hidden rather than missing and `get_exchange`
+fetches it by id.
 
 ### Why `tls_failed` needs a Scope
 
@@ -332,9 +422,18 @@ In a real run with one simulator fetching one URL, the failing hosts included `d
 that. Counting raw handshake failures reported `tls_failed` permanently, on a capture that was
 working perfectly.
 
-So pinning is only attributable **inside a Scope**: with one, you have said which hosts are the app.
-Without one, unscoped captures surface the count, note that the failures are unattributable, and
-name the Scope as the thing that would make them interpretable.
+So the count is only worth a verdict **inside a Scope**: with one, you have said which hosts are
+the app's, so the failures being counted are at least about the right hosts. Without one, unscoped
+captures surface the count, note that the failures are unattributable, and name the Scope as the
+thing that would make them interpretable.
+
+A Scope narrows **hosts, not clients**, and that limit is real rather than theoretical. Another
+simulator, or a browser on this Mac, talking to a host you named is counted too: it arrives over
+the same loopback, and it has no reason to trust an authority installed only into the capture
+target. One such request is enough to flip a healthy capture to `tls_failed` — reproduced
+deliberately on 2026-08-18, against a device that was working perfectly at that moment. That is why
+the verdict says the count is machine-wide rather than naming your device. Narrow the Scope, or
+quit the other clients, and see whether the count stops rising.
 
 `get_status` answers a different and narrower question — is capture running at all, and how many
 Exchanges have been seen:
@@ -349,6 +448,40 @@ Exchanges have been seen:
   "proxy": { "redirected": false, "detail": "the system proxy is not redirected" }
 }
 ```
+
+### Is my machine still proxied, and by whom?
+
+`proxy` is answered whether or not this Session is recording, because it is read from a record on
+disk rather than from Session state. That matters: the question is asked precisely when nothing is
+recording here, and every editor window on the machine runs its own copy of this server against the
+same record.
+
+```json
+{
+  "recording": false,
+  "detail": "not recording; call start_capture first",
+  "sessions_root": "…",
+  "proxy": {
+    "redirected": true,
+    "service": "Wi-Fi",
+    "sentinel": "…/proxy-state.json",
+    "owner": { "pid": 89858, "ours": false },
+    "detail": "Wi-Fi is routed through the capture port by another https-proxy-mcp process (pid 89858) that is still running. Nothing here owns it, so there is nothing to stop here; `kill 89858` makes that process put the machine back on its way out"
+  }
+}
+```
+
+`owner.ours` is the field to act on. `stop_capture` puts back a redirect **this** process made and
+nothing else, so for someone else's the remedy is the signal named in `detail` — the holder installs
+`SIGTERM`, `SIGINT` and exit handlers, so signalling it makes *it* restore the machine on its way
+out. There is deliberately no tool that force-releases another process's redirect: doing that from
+here would restore state this process never recorded, which is the disregard for ownership that
+caused the defect in the first place. An uncatchable `kill -9` leaves the record behind, and the next
+server start repairs it.
+
+Starting a Session while another live process holds the redirect is **refused**, naming that pid,
+rather than taken over or waited for. A takeover would leave the other window recording nothing; a
+wait would hang this session.
 
 ## Secrets
 
@@ -424,10 +557,10 @@ Twenty tools. Signatures are the real ones; defaults are shown where they exist.
 
 | Tool | Notes |
 |---|---|
-| `start_capture(target, port, scope, udid, passthrough)` | `target="curl"`, `port=8080`, `passthrough=True`. `port=0` binds an ephemeral one and reports it. With a `scope`, `passthrough` decrypts only those hosts and forwards every other connection untouched. Required before any other traffic tool |
+| `start_capture(target, port, scope, udid, passthrough, lens)` | `target="curl"`, `port=8080`, `passthrough=True`. `port=0` binds an ephemeral one and reports it. With a `scope`, `passthrough` decrypts only those hosts' HTTPS and forwards every other TLS connection untouched; plain HTTP is captured regardless. `lens` is a filter expression narrowing every later report, including `get_timeline` and `wait_for_exchanges`. Refused while another live process holds the machine's proxy. Required before any other traffic tool |
 | `stop_capture()` | Releases the port and undoes any routing. Always call it |
-| `get_status()` | Recording state, counts, Scope, proxy state, trust, `open_step` |
-| `diagnose_capture()` | The five verdicts above, plus the counts they came from |
+| `get_status()` | Recording state, counts, Scope, Lens, trust, `open_step`, and `proxy` — which includes the redirect's `owner` and is answered even when not recording |
+| `diagnose_capture()` | The six verdicts above, plus the counts they came from and the device census |
 
 ### Trust
 
@@ -446,7 +579,7 @@ Twenty tools. Signatures are the real ones; defaults are shown where they exist.
 | `get_exchange_body(exchange_id, side, offset, length, include_secrets)` | `side` is `"request"`/`"response"`. `length=65536` |
 | `search_exchanges(filter, limit, cursor, include_denied)` | mitmproxy filter expressions |
 | `tail_exchanges(cursor, filter, limit, include_denied)` | `limit=50` (max 200). `next_cursor` always usable, so an empty result hands back the cursor you gave it |
-| `wait_for_exchanges(filter, timeout_ms, min_count)` | `timeout_ms=15000` (max 120000), `min_count=1`. Counts only new traffic |
+| `wait_for_exchanges(filter, timeout_ms, min_count)` | `timeout_ms=15000` (max 120000), `min_count=1`. Counts only new traffic. Exempt from the denylist and Scope; **not** exempt from the Lens |
 | `export_curl(exchange_id, include_secrets)` | Redacted default does not run |
 
 ### Runs and Timelines

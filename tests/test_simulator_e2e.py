@@ -42,6 +42,16 @@ pytestmark = [
 TARGET_URL = "https://example.com/"
 TARGET_HOST = "example.com"
 
+#: What this Session is allowed to decrypt, which under Passthrough (ADR-0007) is also all it
+#: intercepts. Everything else is forwarded unopened, so the developer's browser and the other
+#: simulators on the machine keep working for as long as the test holds the proxy.
+#:
+#: These tests were written before that mechanism existed and ran unscoped, which intercepts the
+#: whole machine: a real run logged client handshake failures for six of the developer's own
+#: applications. Nothing here asserts on any host but this one, so the Scope costs the tests
+#: nothing — the sibling in `test_maestro_e2e.py` is the one where it is not free.
+SCOPE = [TARGET_HOST]
+
 #: Reuse a specific device instead of creating one. Useful for debugging a failure by hand, but
 #: not the default: capture installs an Interception Authority into the device's trust store, and
 #: doing that to a simulator the developer actually works in is not this test's business.
@@ -99,7 +109,7 @@ async def test_a_real_simulator_app_s_https_traffic_is_captured(tmp_path, simula
 
     try:
         started = await call(
-            server, "start_capture", target="ios-simulator", port=0, udid=simulator
+            server, "start_capture", target="ios-simulator", port=0, udid=simulator, scope=SCOPE
         )
         assert started["trust"]["trusted"] is True, started["trust"]["detail"]
 
@@ -143,7 +153,7 @@ async def test_stopping_restores_the_machine_exactly(tmp_path, simulator):
     state = CaptureState(tmp_path)
     server = build_server(state=state)
 
-    await call(server, "start_capture", target="ios-simulator", port=0, udid=simulator)
+    await call(server, "start_capture", target="ios-simulator", port=0, udid=simulator, scope=SCOPE)
     try:
         during = read_real_state()
         assert during.web.enabled is True

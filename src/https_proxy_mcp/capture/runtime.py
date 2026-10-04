@@ -21,9 +21,14 @@ guessed differently:
   is what lets a caller ask for "any free port" and still be told which one.
 
 Passthrough (CONTEXT.md) is the one decision here that is not about lifecycle. ``intercept_hosts``
-names the hosts to decrypt, and every other connection is forwarded without being opened — it
-arrives carrying the real certificate, so a browser or a simulator that never trusted the
-Interception Authority is unaffected by a capture it was never part of. ``None`` means intercept
+names the hosts to decrypt, and every other **TLS** connection is forwarded without being opened —
+it arrives carrying the real certificate, so a browser or a simulator that never trusted the
+Interception Authority is unaffected by a capture it was never part of. Plain HTTP is not covered
+and cannot be: ``next_layer.py``'s ``_ignore_connection`` answers ``False`` when it has no host
+name to test, and a plain-HTTP proxy request does not name its destination until the request line
+is parsed, which is after the layer has been chosen. Only a CONNECT authority and a TLS SNI arrive
+early enough. Measured on a real capture, where every recorded Exchange turned out to be
+plain-HTTP bundler traffic from a host the Scope never named. ``None`` means intercept
 everything, which is mitmproxy's own default and this project's only behaviour before Passthrough
 existed. The patterns are rendered by :mod:`~https_proxy_mcp.capture.hostsets` from the same
 definition the Scope predicate answers from; nothing here writes one.

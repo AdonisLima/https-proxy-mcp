@@ -77,9 +77,17 @@ effect, so when restoring a configured-but-disabled proxy the state command come
 - **An interactive `sudo`.** Not needed here at all: `networksetup` proxy changes require no
   `sudo` for a user in the `admin` group.
 
-## Known stale
+## What a run has already shown
 
-`tests/test_simulator_e2e.py` has not been re-run since P4's `build_target` validation and
-`trust_status` protocol change. All 66 simulator/trust unit tests pass and P4's live run
-exercised the same path, so the risk is low. Re-running costs one proxy mutation — bundle it
-with a future live run rather than mutating the machine for it alone.
+Re-run 2026-08-17, with the machine's state recorded first and byte-identical afterwards.
+
+- **All three tests are scoped now, and all three pass.** `test_simulator_e2e.py` uses
+  `scope=["example.com"]`; `test_maestro_e2e.py` uses `["example.com", "192.0.2.1"]` and arranges
+  its own in-flight request against that documentation address. A full run logs **zero** client
+  TLS handshake failures, where an unscoped one broke the developer's own applications and
+  Maestro's endpoint. So a run no longer costs you your browser.
+- **Do not "simplify" the Maestro test's `192.0.2.1` hang into a listener on this machine.** It
+  was tried. The device fetches it and the listener sees the connection, but macOS bypasses the
+  proxy for local-subnet addresses, so the proxy never sees the request and the Timeline has
+  nothing in flight. The test file records the whole measurement.
+- **`test_simulator_e2e.py` is no longer the stale one.** It was, before this run.

@@ -27,8 +27,20 @@ The set of hosts an agent is currently interested in. Narrows what is reported; 
 _Avoid_: filter, allowlist, include list
 
 **Passthrough**:
-The condition of a connection being forwarded without being decrypted, so the Capture Target sees the real certificate rather than one signed by the Interception Authority. Traffic in Passthrough is invisible to this tool, and unaffected by it — which is the point: the machine is proxied as a whole, so everything the agent has not asked about should reach its destination untouched.
+The condition of a TLS connection being forwarded without being decrypted, so the Capture Target sees the real certificate rather than one signed by the Interception Authority. Such a connection is invisible to this tool and unaffected by it — which is the point: the machine is proxied as a whole, so everything the agent has not asked about should reach its destination untouched. It applies to TLS alone. A plain HTTP request is intercepted whatever the Scope says, because the proxy must choose whether to open a connection before a plain HTTP request has named its destination; only a CONNECT authority and a TLS SNI arrive early enough to be tested. So a plain HTTP host outside the Scope is hidden from reporting rather than absent from the Session, which is a different answer to "why is there no traffic from that host?" and the reason both are stated.
 _Avoid_: ignore (mitmproxy's word for the same option), bypass (the Mac's proxy settings have a bypass list of their own, which is a different mechanism at a different layer), tunnel, allowlist
+
+**Lens**:
+A standing predicate over Exchanges that narrows what a Session reports, written as a filter
+expression and named once, when capture begins. Where a Scope narrows by host, a Lens narrows by
+anything a request or a response says about itself — most usefully by something a client stamped
+on its own requests, which is the only evidence able to separate two Capture Targets sending the
+same traffic to the same hosts. It applies wherever a Scope does, and to the wait as well. It
+cannot narrow a TLS handshake failure or a request still in flight, because neither of those is an
+Exchange and there is nothing to test the expression against.
+_Avoid_: filter (a Scope already lists that word as one to avoid, and a second use would make the
+two unstateable apart), query, view (a Timeline is already the view over a Session), device filter
+(it narrows by what a request states about itself, never by anything the proxy worked out)
 
 ### Testing
 

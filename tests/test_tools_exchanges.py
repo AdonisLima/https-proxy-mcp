@@ -459,8 +459,10 @@ async def test_exporting_curl_can_be_made_runnable(server, recording):
 
 # --- reporting is narrowed by the denylist and the Scope -----------------------
 #
-# Capture stays unconditional; these tests are about what an agent is shown. The counts are
-# asserted as hard as the rows are: quietly dropping traffic would read as "there was none".
+# These tests are about what an agent is shown, not about what was captured — which under
+# Passthrough a Scope also narrows (ADR-0007), through a mechanism none of these tools can see. The
+# counts are asserted as hard as the rows are: quietly dropping traffic would read as "there was
+# none".
 
 
 async def test_os_chatter_is_left_out_of_a_listing(server, recording):
@@ -505,6 +507,28 @@ async def test_a_session_scope_narrows_a_listing(state):
 
     assert [row["host"] for row in result["exchanges"]] == ["api.example.com"]
     assert result["hidden"] == 1
+
+
+async def test_include_denied_does_not_restore_rows_the_scope_removed(state):
+    """Two narrowings, one parameter, and it only lifts one of them.
+
+    Measured against a real Session: a listing reported ``hidden: 6`` and returned nothing, and
+    ``include_denied=true`` made no difference — correct, because a Scope is what the agent asked
+    for and the denylist is what this tool assumed. But the parameter's own description said "as is
+    anything outside the Session's Scope … ``include_denied=true`` shows them", which reads as a
+    promise it cannot keep. So the behaviour and the sentence that describes it are asserted
+    together: widening is done by restarting with a wider Scope, and nothing else does it.
+    """
+    await state.start(target="curl", port=0, scope=["api.example.com"])
+    server = build_server(state=state)
+    state.store.record(captured(host="cdn.example.com"))
+
+    result = await call(server, "list_exchanges", include_denied=True)
+    listing = next(tool for tool in await server.list_tools() if tool.name == "list_exchanges")
+
+    assert result["exchanges"] == []
+    assert result["hidden"] == 1
+    assert "include_denied=true`` shows them" not in (listing.description or "")
 
 
 async def test_a_scope_beats_the_denylist(state):

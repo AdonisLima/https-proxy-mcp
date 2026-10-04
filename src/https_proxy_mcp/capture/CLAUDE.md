@@ -37,6 +37,24 @@ object at the boundary.
   diverge at `kivid.com.br..` — a string nothing emits. The equivalence is asserted over the hosts
   that occur, not over every string, and the table in `tests/test_hostsets.py` is where that
   promise actually lives.
+- **`allow_hosts` scopes TLS interception only — plain HTTP is intercepted whatever it says.**
+  `next_layer.py`'s `_ignore_connection` returns `False` when it has no hostname to test, and for a
+  plain-HTTP proxy request the destination is not known until the request line is parsed, which is
+  *after* the layer has been chosen. Only a CONNECT authority and a TLS SNI arrive early enough.
+  Found by hand-verifying a live scoped capture: all eleven Exchanges recorded were plain-HTTP Metro
+  bundler traffic from `localhost`, a host the Scope never named, which read at first as
+  `allow_hosts` not being applied at all. It was applied — `translate.google.com` came back with its
+  real issuer in the same run. Consequence worth carrying into any prose you write here: an
+  out-of-scope **HTTPS** host was never captured and cannot be fetched by id, while an out-of-scope
+  **plain-HTTP** host was captured and is merely hidden by reporting. Opposite remedies, identical
+  appearance in a listing.
+- **A filter expression whose value contains a space must be quoted, or it matches nothing.**
+  `~hq X-Sim: sidekick` does not fail — `flowfilter.parse` accepts it and the result matches
+  neither a request carrying that header nor one that does not. `~hq "X-Sim: sidekick"` is the
+  form that works. Measured against both, because the failure is silent: an unquoted Lens hides
+  the whole Session and looks exactly like a capture that recorded nothing. Anywhere this project
+  writes a header-matching example, it writes the quotes.
+
 - **Keep the proxy off stdout anyway.** A stray flushed `print` does *not* corrupt MCP framing —
   tested deliberately; the client parses stdout line by line and skips what it cannot parse. But
   an interleaved write *inside* a JSON-RPC line would corrupt it. No test enforces this.

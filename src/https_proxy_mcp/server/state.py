@@ -19,6 +19,7 @@ from typing import Any
 from mcp.server.fastmcp.exceptions import ToolError
 
 from https_proxy_mcp.capture import Exchange, ExchangeStore
+from https_proxy_mcp.capture.filtering import exchange_matcher
 from https_proxy_mcp.capture.reporting import ReportingFilter
 from https_proxy_mcp.capture.runtime import ProxyRuntime
 from https_proxy_mcp.capture.session import (
@@ -29,7 +30,13 @@ from https_proxy_mcp.capture.session import (
 )
 from https_proxy_mcp.eventsources.explicit import StepLog
 from https_proxy_mcp.runs.registry import Run, RunRegistry
-from https_proxy_mcp.targets import CaptureObservations, CaptureTarget, build_target
+from https_proxy_mcp.targets import (
+    AuthorityCensus,
+    CaptureObservations,
+    CaptureTarget,
+    build_target,
+)
+from https_proxy_mcp.targets.ios_simulator import IosSimulatorTarget
 from https_proxy_mcp.targets.systemproxy import (
     CommandRunner,
     Ownership,
@@ -70,6 +77,10 @@ class CaptureState:
         self._target: CaptureTarget | None = None
         self._trust: dict[str, Any] | None = None
         self._runs: RunRegistry | None = None
+        # The Lens (CONTEXT.md), compiled once at `start` so a bad expression is refused there.
+        # Late-binding on the store: it is compiled before the store exists and never called
+        # until after, because the only thing that calls it is a listing of what the store holds.
+        self._lens: Callable[[Exchange], bool] | None = None
         # Explicit marks belong to the Session rather than to a Run: a human marking Steps by hand
         # has no Run at all, and a Run selects the marks inside its own window.
         self._steps: StepLog | None = None
@@ -91,6 +102,23 @@ class CaptureState:
     def scope(self) -> tuple[str, ...] | None:
         """The recording Session's Scope, or ``None`` when there is none."""
         return self._session.scope if self._session is not None else None
+
+    @property
+    def lens(self) -> str | None:
+        """The recording Session's Lens expression, or ``None`` when there is none."""
+        return self._session.lens if self._session is not None else None
+
+    @property
+    def lens_predicate(self) -> Callable[[Exchange], bool] | None:
+        """The compiled Lens, for the one caller that is not a listing.
+
+        Every listing gets the Lens through :meth:`reporting`, which is where it belongs. But
+        ``wait_for_exchanges`` is exempt from the Scope and the denylist on purpose — an explicit
+        question should not be vetoed — and it still has to obey the Lens, so it needs the Lens
+        without the rest. Exposed narrowly rather than by relaxing that exemption, because the
+        exemption is right and the Lens is the exception to it.
+        """
+        return self._lens
 
     @property
     def session(self) -> Session:
@@ -218,7 +246,27 @@ class CaptureState:
             # forty times says nothing the first did not.
             tls_failure_hosts=tuple(dict.fromkeys(relevant_hosts)),
             reported=len(reported),
+            # Not a count, and the only thing here a *narrowing* cannot explain: under Passthrough
+            # HTTPS traffic outside the Scope was never decrypted, so its absence is not something
+            # any listing filter hid. A target cannot know this — it never sees the Scope.
+            passthrough=self._session is not None and self._session.passthrough,
         )
+
+    def authority_census(self, target: CaptureTarget | None = None) -> AuthorityCensus:
+        """How many booted devices trust the Interception Authority.
+
+        Asked of the target rather than answered here, and asked only of the one target that can
+        answer it. ``isinstance`` rather than a protocol method, because a trust store per device
+        is an iOS Simulator fact: ``CurlTarget`` has nothing to count, and a protocol method it
+        had to stub would be ceremony dressed as a contract.
+
+        An empty census is the answer for every other target, and says nothing — which is correct,
+        not a silent failure. Nothing else on this machine has a per-device trust store to read.
+        """
+        subject = target if target is not None else self._target
+        if isinstance(subject, IosSimulatorTarget):
+            return subject.authority_census()
+        return AuthorityCensus()
 
     def diagnose(self) -> dict[str, Any]:
         """Why capture is or is not working, as ``diagnose_capture`` reports it.
@@ -228,15 +276,50 @@ class CaptureState:
         with one more thing that does not work.
         """
         if not self.recording or self._target is None:
+            # "Call start_capture" is the wrong advice in exactly one case, and it is the case
+            # this tool is reached from: another live process holds the machine's proxy, so
+            # start_capture has already been refused and calling it again is refused identically.
+            # The cause is on disk and process-independent, so it needs no Session and no target.
+            #
+            # One read, not two. Asking `_foreign_holder` and then asking `proxy_state` resolved
+            # ownership twice, so a holder that exited in between answered `proxy_held_elsewhere`
+            # with the dead-owner sentence — a verdict contradicting its own detail.
+            proxy, holder = self._proxy_report()
+            if holder is not None:
+                return {
+                    "status": "proxy_held_elsewhere",
+                    # Deliberately not NOT_RECORDING: its "call start_capture first" is the advice
+                    # this branch exists to withhold. What follows is the sentence `proxy_state`
+                    # already composes for this ownership state, rather than a second wording of one
+                    # fact — it names the service, the holder's pid and the signal that releases it.
+                    "detail": f"not recording here, and {proxy['detail']}",
+                    "remediation": (
+                        f"`kill {holder.pid}` makes that process restore the machine on its way"
+                        " out, after which this refusal no longer applies. It is not released here:"
+                        " restoring a redirect this process does not own would leave that process"
+                        " recording nothing"
+                    ),
+                    "target": None,
+                    "observed": _observed_dict(CaptureObservations()),
+                    # Null, not zero: no Capture Target was built here, so no trust store was
+                    # read. See `_census_dict`.
+                    **_census_dict(None, capture_target_trusts=False),
+                }
             return {
                 "status": "no_connect",
                 "detail": NOT_RECORDING,
                 "remediation": "call start_capture, then drive the app and try again",
+                # Null rather than absent, so every verdict answers with the same keys. A caller
+                # reading `result["target"]` got a KeyError from exactly the two branches that say
+                # something is wrong, which is how an agent concludes nothing is.
+                "target": None,
                 "observed": _observed_dict(CaptureObservations()),
+                **_census_dict(None, capture_target_trusts=False),
             }
 
         observed = self.observations()
         diagnosis = self._target.diagnose(observed)
+        census = self.authority_census()
         return {
             "status": diagnosis.status,
             "detail": diagnosis.detail,
@@ -244,6 +327,13 @@ class CaptureState:
             "target": self._session.target if self._session else None,
             # Reported so an agent can check the reasoning rather than having to trust it.
             "observed": _observed_dict(observed),
+            # Every verdict carries it, not just `tls_failed`. A second trusting device explains
+            # an unexpected row as readily as it explains a handshake failure, and a verdict that
+            # mentioned it only when handshakes failed would teach an agent it means nothing else.
+            **_census_dict(
+                census,
+                capture_target_trusts=bool(self._trust and self._trust.get("trusted")),
+            ),
         }
 
     def reporting(
@@ -255,9 +345,14 @@ class CaptureState:
         """How a listing narrows what it shows: the Run window, the Session's Scope, the denylist.
 
         Built per call rather than held, because ``include_denied`` and ``window`` are per-call
-        decisions and a cached filter would quietly ignore them.
+        decisions and a cached filter would quietly ignore them. The Lens is not one of them: it
+        belongs to the Session, and every caller of this method gets it whether or not it knew to
+        ask. That is the whole reason it is here and not a parameter on the tools — a narrowing an
+        agent has to remember on each call is one it will forget on the call that mattered.
         """
-        return ReportingFilter(scope=self.scope, include_denied=include_denied, window=window)
+        return ReportingFilter(
+            scope=self.scope, include_denied=include_denied, window=window, lens=self._lens
+        )
 
     def exchange(self, exchange_id: int) -> Exchange:
         """One Exchange, distinguishing "never existed" from "evicted"."""
@@ -286,6 +381,7 @@ class CaptureState:
         scope: list[str] | None,
         udid: str | None = None,
         passthrough: bool = True,
+        lens: str | None = None,
         capacity: int = ExchangeStore.DEFAULT_CAPACITY,
     ) -> dict[str, Any]:
         """Begin a Session: prune, prepare the target, start the proxy, then route to it."""
@@ -295,6 +391,19 @@ class CaptureState:
             raise ToolError(
                 f"already recording into Session {self._session.id}; call stop_capture first"
             )
+
+        # Compiled before anything is arranged, so a typo in an expression cannot be discovered
+        # after the machine's proxy has been redirected and an authority installed into a device.
+        # It closes over `self.store` rather than over a store that does not exist yet; nothing
+        # calls it until a listing does, by which time one does.
+        lens_predicate: Callable[[Exchange], bool] | None = None
+        if lens:
+            try:
+                lens_predicate = exchange_matcher(
+                    lens, lambda exchange, side: self.store.read_body(exchange, side)
+                )
+            except ValueError as exc:
+                raise ToolError(str(exc)) from None
 
         capture_target = self.build_target(target, udid=udid)
 
@@ -326,6 +435,7 @@ class CaptureState:
             port=port,
             scope=scope,
             udid=udid,
+            lens=lens,
             # The condition, not the parameter: `passthrough=True` with no Scope decrypts
             # everything, and a manifest claiming otherwise would send a later reader looking for
             # traffic that was recorded all along.
@@ -360,6 +470,9 @@ class CaptureState:
         self._trust = {"trusted": trust.trusted, "detail": trust.detail}
         self._runs = RunRegistry(session.dir)
         self._steps = StepLog()
+        self._lens = lens_predicate
+
+        census = self.authority_census(capture_target)
 
         return {
             "recording": True,
@@ -371,8 +484,13 @@ class CaptureState:
             # Reported so the default engaging is never silent: it changes what the *rest of the
             # machine* sees, which is not something an agent should have to infer from a default.
             "passthrough": session.passthrough,
+            # Reported for the same reason `passthrough` is: it changes what every later listing
+            # and every Timeline will show, and an agent reading an empty result should be able to
+            # see that it asked for one rather than have to remember.
+            "lens": session.lens,
             "session_dir": str(session.dir),
             "trust": self._trust,
+            **_census_dict(census, capture_target_trusts=trust.trusted),
         }
 
     async def stop(self) -> dict[str, Any]:
@@ -395,6 +513,7 @@ class CaptureState:
 
         self._session = self._store = self._runtime = self._target = self._trust = None
         self._runs = self._steps = None
+        self._lens = None
 
         return {
             "recording": False,
@@ -429,6 +548,7 @@ class CaptureState:
             "host": self._runtime.host,
             "target": self._session.target,
             "scope": list(self._session.scope) if self._session.scope is not None else None,
+            "lens": self._session.lens,
             "exchanges": self._store.recorded_count,
             "retained": len(self._store),
             "evicted": self._store.evicted_count,
@@ -454,9 +574,21 @@ class CaptureState:
         every editor window runs its own server, so a redirect may well belong to a process this
         one cannot see or stop.
         """
+        return self._proxy_report()[0]
+
+    def _proxy_report(self) -> tuple[dict[str, Any], ProxyOwner | None]:
+        """The redirect report, and the live foreign holder it found, from a single read.
+
+        Two callers want two halves of one answer: ``get_status`` wants the report, and
+        ``diagnose_capture`` wants the holder *and* the report's sentence about it. Asking twice
+        resolved ownership twice, and a holder that exited between the two reads produced a
+        ``proxy_held_elsewhere`` verdict whose detail came from the dead-owner branch. Vanishingly
+        unlikely, harmless either way, and an answer contradicting itself is precisely the failure
+        this work exists to stop — so the window is closed rather than documented.
+        """
         sentinel = sentinel_path(self._root)
         if not sentinel.exists():
-            return {"redirected": False, "detail": "the system proxy is not redirected"}
+            return {"redirected": False, "detail": "the system proxy is not redirected"}, None
 
         proxy = SystemProxy(sentinel, runner=self._runner)
         record = proxy.read_record()
@@ -474,25 +606,29 @@ class CaptureState:
                 "owner": None,
                 "detail": f"redirected, but the sentinel at {sentinel} could not be read;"
                 " the next server start will switch the proxy off to restore connectivity",
-            }
+            }, None
 
         owner = record.owner
         ownership = resolve_ownership(owner, runner=self._runner)
-        return {
+        report = {
             "redirected": True,
             "service": record.prior.service,
             "sentinel": str(sentinel),
             # ``ours`` is the field an agent acts on: stop_capture puts back a redirect this
             # process made, and nothing else.
             "owner": None if owner is None else {"pid": owner.pid, "ours": ownership == "ours"},
-            "detail": _proxy_detail(record.prior, owner, ownership),
+            "detail": _proxy_detail(record.prior, owner, ownership, recording=self.recording),
         }
+        holder = owner if ownership == "live_foreign" else None
+        return report, holder
 
 
 def _proxy_detail(
     prior: SystemProxyState,
     owner: ProxyOwner | None,
     ownership: Ownership,
+    *,
+    recording: bool,
 ) -> str:
     """One sentence about a redirect, branched on who owns it.
 
@@ -500,6 +636,12 @@ def _proxy_detail(
     process owns. For a record another live process holds it is simply false — stopping here
     restores nothing, because restoring someone else's redirect is the defect this work removes —
     and prose that is confidently wrong is what sent the developer looking in the wrong place.
+
+    ``recording`` exists for the same reason one layer along. "This Session does not own it" is
+    true and useful while a Session is open here, and names something that does not exist when
+    there is none — which is the state ``diagnose_capture`` borrows this sentence in, since its
+    ``proxy_held_elsewhere`` branch is reached only when nothing is recording. CONTEXT.md's Session
+    is a precise word and this branch is the one place the tool was using it loosely.
     """
     routed = f"{prior.service} is routed through the capture port"
     restored_at_the_next_start = f"The next server start restores server={prior.server_summary}"
@@ -519,9 +661,14 @@ def _proxy_detail(
         )
 
     if ownership == "live_foreign":
+        held = (
+            "This Session does not own it, so stopping here leaves it in place"
+            if recording
+            else "Nothing here owns it, so there is nothing to stop here"
+        )
         return (
             f"{routed} by another https-proxy-mcp process (pid {owner.pid}) that is still running."
-            " This Session does not own it, so stopping here leaves it in place;"
+            f" {held};"
             f" `kill {owner.pid}` makes that process put the machine back on its way out"
         )
 
@@ -529,6 +676,30 @@ def _proxy_detail(
         f"{routed} by a process that is no longer running (pid {owner.pid}), so it was left behind"
         f" rather than released. {restored_at_the_next_start}"
     )
+
+
+def _census_dict(census: AuthorityCensus | None, *, capture_target_trusts: bool) -> dict[str, Any]:
+    """The census as tool output: two counts, and a sentence only when there is one to say.
+
+    Two counts rather than one, because "3 booted, 1 trusting" and "3 booted, 3 trusting" are
+    entirely different situations and a single number tells them apart in neither direction.
+    ``devices_note`` is null far more often than not, which is the point — a warning that appears
+    every time is one an agent learns to skip.
+
+    ``None`` means *nobody counted*, and renders as null rather than as zero. The distinction is
+    the whole reason this takes an optional: the verdicts reached with no Capture Target built have
+    no way to look at a trust store, and answering "0 booted" there would be a false statement
+    about a machine that may well have three. Every verdict still carries the keys — a caller
+    reading `result["devices_booted"]` gets a value from all of them, which is the same promise
+    ``target`` and ``observed`` already make.
+    """
+    return {
+        "devices_booted": census.booted if census is not None else None,
+        "devices_trusting_authority": census.trusting if census is not None else None,
+        "devices_note": (
+            census.note(capture_target_trusts=capture_target_trusts) if census is not None else None
+        ),
+    }
 
 
 def _observed_dict(observed: CaptureObservations) -> dict[str, Any]:
@@ -541,4 +712,7 @@ def _observed_dict(observed: CaptureObservations) -> dict[str, Any]:
         "tls_failures": observed.tls_failures,
         "tls_failures_total": observed.tls_failures_total,
         "tls_failure_hosts": list(observed.tls_failure_hosts),
+        # The premise of the Passthrough caveat, reported for the same reason as the counts: a
+        # verdict that reasons from something invisible cannot be checked, only believed.
+        "passthrough": observed.passthrough,
     }

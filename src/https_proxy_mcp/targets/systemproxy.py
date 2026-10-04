@@ -270,9 +270,10 @@ class ProxyHeldElsewhereError(RuntimeError):
             "the system proxy is already redirected by another https-proxy-mcp process"
             f" (pid {holder.pid}) that is still running, so nothing has been started here."
             " Taking the redirect over would leave that process recording nothing, and waiting"
-            f" for it would hang this session. `kill {holder.pid}` makes that process restore the"
-            " machine on its way out, after which this call succeeds; an uncatchable `kill -9`"
-            " leaves its record behind for the next server start to repair"
+            f" for it would hang this session. `kill {holder.pid}` sends SIGTERM, which makes that"
+            " process restore the machine on its way out, after which this refusal no longer"
+            " applies — whatever else this call needs is a separate matter and will say so. An"
+            " uncatchable `kill -9` leaves its record behind for the next server start to repair"
         )
 
 

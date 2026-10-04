@@ -44,7 +44,7 @@ PRIOR = SystemProxyState(
 CHILD = '''
 import subprocess, sys, time, json
 from pathlib import Path
-from https_proxy_mcp.targets.systemproxy import SystemProxy
+from https_proxy_mcp.targets.systemproxy import PS, SystemProxy
 
 root = Path(sys.argv[1])
 prior = json.loads(Path(sys.argv[2]).read_text())
@@ -58,8 +58,10 @@ def runner(argv, *, stdin=None):
         handle.write(json.dumps(argv) + "\\n")
     # `ps` is the exception, and deliberately real: the sentinel records who wrote it, and a
     # canned start time would make the record indistinguishable from one this parent wrote. Reading
-    # the process table changes nothing on the machine.
-    if argv[0].endswith("ps"):
+    # the process table changes nothing on the machine. Matched against the module's own constant,
+    # because this is the one branch that reaches the real machine and a suffix match would hand a
+    # future binary whose path merely ends in those letters straight through.
+    if argv[0] == PS:
         return subprocess.run(argv, capture_output=True, text=True).stdout
     if argv[0].endswith("scutil"):
         if stdin and "Setup:/Network/Service/" in stdin:

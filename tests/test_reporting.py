@@ -1,8 +1,9 @@
 """Tests for narrowing what is *reported*, which is never the same as what was captured.
 
-Capture is unconditional — everything through the proxy is recorded (CONTEXT.md, SPEC.md).
 What these tests govern is the second question: of everything recorded, what does an agent get
-shown. Two mechanisms, one shape:
+shown. What was recorded in the first place is a separate decision and lives elsewhere — under
+Passthrough a Scope also narrows that (ADR-0007), and nothing in this module knows or should.
+Two mechanisms, one shape:
 
 - a **builtin denylist** of OS chatter, which exists because regular proxy mode has no process
   attribution (ADR-0002), so simulator traffic and Safari traffic are indistinguishable at the

@@ -68,8 +68,9 @@ the design.
 
 2. **Passthrough cannot be observed, and must not be.** `next_layer.py:129` builds ignored
    connections as `TCPLayer(context, ignore=not ctx.options.show_ignored_hosts)`. So there *is* an
-   option that would let the addon count them — and its own help says it *"will keep ignored
-   flows' contents in memory, which can greatly increase memory usage."* On a machine-wide proxy
+   option that would let the addon count them — and its own help warns that it will keep every
+   ignored connection's contents in memory, *"which can greatly increase memory usage."* On a
+   machine-wide proxy
    that is the entire machine's traffic buffered in the MCP server. **So `diagnose_capture` can
    never observe that a host was passed through.** It can only deduce it from "Passthrough is on
    and this host is not in the Scope", and the design says exactly that rather than pretending to
@@ -96,11 +97,24 @@ and Scope keeps its meaning, gaining one clause. **Already written:**
 > **Scope**: The set of hosts an agent is currently interested in. Narrows what is reported;
 > narrows what is intercepted only under Passthrough.
 >
-> **Passthrough**: The condition of a connection being forwarded without being decrypted, so the
-> Capture Target sees the real certificate rather than one signed by the Interception Authority.
-> Traffic in Passthrough is invisible to this tool, and unaffected by it. *Avoid*: ignore
-> (mitmproxy's word for the same option), bypass (the Mac's proxy settings have a bypass list of
-> their own, which is a different mechanism at a different layer), tunnel, allowlist.
+> **Passthrough**: The condition of a ~~connection~~ **TLS connection** being forwarded without
+> being decrypted, so the Capture Target sees the real certificate rather than one signed by the
+> Interception Authority. ~~Traffic in Passthrough is invisible to this tool, and unaffected by
+> it.~~ *Avoid*: ignore (mitmproxy's word for the same option), bypass (the Mac's proxy settings
+> have a bypass list of their own, which is a different mechanism at a different layer), tunnel,
+> allowlist.
+
+**The struck sentence was wrong, and the hand-verification is what found it.** Passthrough scopes
+**TLS** interception only. `next_layer.py`'s `_ignore_connection` returns `False` when it has no
+hostname to test, and a plain-HTTP proxy request does not name its destination until the request
+line is parsed — which happens *after* the layer is chosen. Only a CONNECT authority and a TLS SNI
+arrive early enough. So plain HTTP is intercepted whatever the Scope says: in the live run every
+recorded Exchange was plain-HTTP Metro bundler traffic from `localhost`, a host the Scope never
+named. Harmless for the reported symptom, since plain HTTP has no certificate to reject, but the
+two cases have opposite remedies — an out-of-scope HTTPS row needs a new Session, an out-of-scope
+plain-HTTP row needs an id — so `CONTEXT.md` now states both and so does every document that
+quotes it. The same correction applies to "everything else is forwarded without being opened" in
+**What this fixes** and in the decision table below: read "every other TLS connection".
 
 ## Decisions
 
@@ -182,8 +196,14 @@ different start time** is treated as dead (probe 3); our own sentinel restores a
 sentinel still fails safe.
 
 **6. `targets/base.py` and `targets/ios_simulator.py`.** `DiagnosisStatus` gains
-`proxy_held_elsewhere` — it is a `Literal`, so `mypy --strict` will name every site that must
-handle it. `diagnose()` gains the branch ahead of its current `no_connect`, and appends the
+`proxy_held_elsewhere`. ~~It is a `Literal`, so `mypy --strict` will name every site that must
+handle it.~~ **That was wrong, and ticket 06 disproved it rather than inheriting it:** nothing in
+`src/` dispatches on `DiagnosisStatus`, so there is no exhaustiveness site for the checker to bite
+on, and no change could make it speak short of adding a `match`/`assert_never` whose only caller
+would be the checklist item itself. The real fall-through was found by reading, and the prose that
+enumerates the verdicts — `docs/USAGE.md` and the tool description — is pinned to
+`get_args(DiagnosisStatus)` by a test instead, which is what a widened `Literal` can actually be
+made to enforce here. `diagnose()` gains the branch ahead of its current `no_connect`, and appends the
 Passthrough caveat to `no_connect` and `out_of_scope` when Passthrough is on. `prepare()` raises on
 a foreign holder; `CaptureState.start` translates that to a `ToolError` so targets keep no MCP
 import.
@@ -206,6 +226,18 @@ being wrong in the new world unless it branches.
   `get_status` must report the redirect and its owning pid, `start_capture` must refuse naming that
   pid, and `stop_capture` in the first must restore the machine exactly.
 
+**Both were done by hand and the results are recorded in `HANDOFF.md`, not here** — a design
+document is intent and the handoff is measurement. In short: the host browsed normally and the
+issuers proved it; a simulator that does **not** trust the Authority kept its network, which is the
+decisive result; the ownership refusal named the right pid and teardown diffed identical
+field-for-field. Two things did not go to plan. `diagnose_capture` answered `tls_failed` for the
+app's host and this was read as certificate pinning, so "the app's own traffic must still appear"
+was filed as unmeetable with that build — **that reading was wrong**, and on 2026-08-18 a full login
+flow was captured and decrypted from the same build. The verdict's count is machine-wide, which is a
+defect in its wording rather than a Passthrough failure; `HANDOFF.md` carries the negative control
+that proved it. And the claim that everything outside the Scope is forwarded unopened turned out to
+be false for plain HTTP; see the correction under **Vocabulary**.
+
 ## Paper trail
 
 `CLAUDE.md` is a symlink to `AGENTS.md`, so that is one edit.
@@ -223,3 +255,11 @@ being wrong in the new world unless it branches.
   only available mechanism"* while arguing for `--mode local`. Passthrough weakens that argument,
   and that document is a live recommendation rather than a historical record, so it is corrected.
 - **`SPEC.md` and `PLAN.md` are not touched.** Both are records of intent.
+
+**Done, and it grew.** The reviewer's list went from four divergences to **eight**: capture is no
+longer unconditional, `start_capture` gained a parameter SPEC.md's row does not list, the verdicts
+are six not five, and the teardown guarantee's layer 3 is now qualified by ownership. The list is
+now enumerated as numbered items and a test couples its length to the count both it and `AGENTS.md`
+state, because a count kept in prose in two files is how one of them goes stale. `tests/CLAUDE.md`
+and the per-module trap files gained what this work learned the hard way, and the suite's size is
+now stated in `AGENTS.md` alone for the same reason.

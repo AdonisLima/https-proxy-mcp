@@ -19,6 +19,7 @@ import pytest
 
 from fake_commands import PROCESS_START, WEB_PROXY_OFF, FakeCommands
 from https_proxy_mcp.targets.systemproxy import (
+    ProxyHeldElsewhereError,
     ProxyOwner,
     ProxySetting,
     SystemProxy,
@@ -442,6 +443,34 @@ def test_an_empty_start_time_never_matches_an_empty_start_time(sentinel):
 
 
 # --- what each path does with a record it does not own ------------------------
+
+
+def test_a_start_is_refused_and_promises_only_that_the_refusal_lifts(sentinel):
+    """The fourth path, and the only one that refuses rather than declining quietly.
+
+    The other three have nothing the caller wanted that they now cannot do, so they are silent.
+    Starting a Session is different, and the message is the entire remedy — there is deliberately
+    no force-release tool, because the holder is the only process that can put the machine back
+    correctly. So the promise has to be exact: signalling the holder lifts *this* refusal, and
+    whatever else the retried call needs will say so for itself. Asserted here as well as through
+    ``test_two_windows.py``'s real second process, because that harness reads the message for the
+    pid and the signal, and the strength of the promise could be reverted underneath it.
+    """
+    commands = FakeCommands()
+    holder = os.getpid() + 1
+    write_sentinel(sentinel, {"pid": holder, "started": PROCESS_START.strip()})
+
+    with pytest.raises(ProxyHeldElsewhereError) as refusal:
+        SystemProxy(sentinel, runner=commands).refuse_if_held()
+
+    # Carried as a value as well as quoted in the message, so a caller reporting the pid does not
+    # have to parse one back out of prose.
+    assert refusal.value.holder == ProxyOwner(pid=holder, started=PROCESS_START.strip())
+    assert f"kill {holder}" in str(refusal.value)
+    assert "succeeds" not in str(refusal.value)
+    assert "no longer applies" in str(refusal.value)
+    assert commands.mutations == []
+    assert sentinel.exists()
 
 
 def test_repair_at_start_leaves_a_live_foreign_record_alone(sentinel, tmp_path):

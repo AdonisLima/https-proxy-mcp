@@ -65,11 +65,17 @@ class Session:
     #: Which device the traffic came from, when the target names one. Recorded so a Session
     #: directory found later says which simulator produced it.
     udid: str | None = None
-    #: Whether Passthrough was in force: only the Scope's hosts were decrypted, and every other
-    #: connection was forwarded unopened (CONTEXT.md). Recorded beside the Scope because it is
-    #: what answers "why is there no traffic from that host?" for a directory found later — the
-    #: traffic was never decrypted, so no listing narrowing can explain its absence.
+    #: Whether Passthrough was in force: only the Scope's hosts had their HTTPS decrypted, and
+    #: every other TLS connection was forwarded unopened (CONTEXT.md). Recorded beside the Scope
+    #: because it is what answers "why is there no traffic from that host?" for a directory found
+    #: later — that traffic was never decrypted, so no listing narrowing can explain its absence.
+    #: Plain HTTP is the exception and was captured from every host.
     passthrough: bool = False
+    #: The Lens expression this Session reports through, or ``None`` (CONTEXT.md). Recorded as
+    #: the text the agent wrote rather than as anything compiled, because a manifest is read by
+    #: people and by later tooling, and "which Exchanges was this Session even willing to show
+    #: me?" is not answerable from the Exchange log alone.
+    lens: str | None = None
 
     @classmethod
     def create(
@@ -81,6 +87,7 @@ class Session:
         scope: list[str] | None = None,
         udid: str | None = None,
         passthrough: bool = False,
+        lens: str | None = None,
         now: datetime | None = None,
     ) -> Session:
         """Create the Session directory and write its manifest.
@@ -108,6 +115,7 @@ class Session:
             scope=tuple(scope) if scope is not None else None,
             udid=udid,
             passthrough=passthrough,
+            lens=lens,
         )
         (session_dir / MANIFEST_FILENAME).write_text(json.dumps(session.to_manifest(), indent=2))
         return session
@@ -122,6 +130,7 @@ class Session:
             "scope": list(self.scope) if self.scope is not None else None,
             "passthrough": self.passthrough,
             "udid": self.udid,
+            "lens": self.lens,
         }
 
 

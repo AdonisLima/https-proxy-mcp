@@ -1,8 +1,12 @@
 # tests/ — traps and discipline
 
-675 passed, 3 skipped. The 3 are the live machine tests; read
+3 skipped, and they are the live machine tests; read
 `.claude/skills/live-machine-tests/SKILL.md` before running them, and
 `.claude/skills/verification-discipline/SKILL.md` before adding to this suite.
+
+The suite's passing count is stated in `../AGENTS.md` and deliberately not repeated here. It was
+repeated, went stale by more than two hundred, and nobody noticed — which is the same drift ADR-0006
+moved the trap lists to avoid.
 
 ## Gating
 
@@ -52,13 +56,31 @@
 
 The expensive kind. Each of these was green while proving nothing:
 
-- **`maestro openLink` to a private-IP `http://` URL did not make Safari fetch it.** A hanging
-  sink on the host's LAN address was never reached, so `pending` stayed empty and the acceptance
-  test passed on incidental Safari traffic instead. The deterministic proof now lives in
-  `test_pending_e2e.py`, driven through `curl`. If you want to force real device traffic to hang,
-  verify the device actually requests your URL first.
+- **A hanging sink on the host's LAN address is never captured — and the recorded reason for that
+  was wrong.** It was written up as "`maestro openLink` to a private-IP URL did not make Safari
+  fetch it". Re-probed: Safari *does* fetch it, over `http://` and `https://`, through both
+  `simctl openurl` and Maestro's own `openLink`, and the connection arrives at the listener. What
+  does not happen is the **proxy** seeing it — macOS bypasses the proxy for local-subnet addresses,
+  with an empty bypass list and nothing in `networksetup -getproxybypassdomains` to say so.
+  Measured in one Session: the listener logged the connection while `pending` stayed empty, and an
+  `https://example.com/` control through the same proxy was captured. The lesson generalises —
+  **"the device never sent it" and "the proxy never saw it" are different findings**, and only a
+  listener of your own tells them apart. `test_maestro_e2e.py` now hangs its request against an
+  RFC 5737 documentation address, which is unroutable *and* not local; `test_pending_e2e.py` still
+  proves the mechanism without a simulator, through `curl`.
 - **A test reading stdin from a subprocess cannot prove stdin was closed**, because pytest has
   already redirected it. It asserts the spawn arguments instead.
+- **`pytest.raises(ToolError)` on the tool surface proves only that *something* refused.** FastMCP
+  wraps any exception into that one type, so a test asserting the type alone stays green with the
+  refusal it exists to prove deleted — measured, by removing `refuse_if_held()` and watching it pass,
+  because `redirect()`'s older refusal was wrapped identically. Assert the message (a pid, a remedy)
+  or a side effect. The mechanism is in `../src/https_proxy_mcp/server/CLAUDE.md`; the bare test that
+  demonstrated it was folded into its sibling rather than kept as an example.
+- **A test that only asserts "no Exchange was recorded" cannot prove Passthrough.** It passes just as
+  well if the connection was intercepted and merely not stored, and again if it was dropped outright.
+  So `test_passthrough.py` asserts the **issuer the client saw** (which separates intercepted from
+  not intercepted) *and* the response body (which separates forwarded from dropped). Neither
+  assertion alone is the claim.
 - **A green clean-install on one interpreter proves nothing about resolution.**
   `test_distribution.py` is parametrised over every interpreter `requires-python` admits, and
   that is what caught `mcp` 2.0.0 removing `mcp.server.fastmcp` entirely. A wheel ships no lock

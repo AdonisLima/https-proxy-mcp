@@ -7,10 +7,19 @@ capture routes traffic with `networksetup` and installs trust with `simctl`.
 v1 is feature-complete. What remains is publication (the user's decision, see HANDOFF.md) and
 v1.1 (docs/v1.1-candidates.md).
 
+Two defects found by using the tool on a real app have been fixed since v1: a Scope now narrows what
+is **decrypted** as well as what is reported (ADR-0007), and the record of the machine's prior proxy
+settings names the process that made the change, so two editor windows stop destroying each other
+(ADR-0008). Both change behaviour a reader may assume, so read those two before either.
+
+A third followed from using it on two simulators at once: reporting gained a fourth narrowing, the
+**Lens** (ADR-0009), because two Capture Targets sending the same traffic to the same hosts cannot
+be separated by any narrowing that works on hosts.
+
 ## Verify
 
 ```bash
-uv run pytest -q          # 675 passed, 3 skipped, ~43s
+uv run pytest -q          # 951 passed, 3 skipped, ~48s
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy               # strict, src/ only
@@ -33,8 +42,9 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
    live schemas by a test, which SPEC.md's table is not.
 3. **[SPEC.md](./SPEC.md)** — the v1 spec. A record of *intent*; its tool table has drifted.
 4. **[PLAN.md](./PLAN.md)** — six phases with acceptance criteria, all six met.
-5. **[docs/adr/](./docs/adr/)** — six decisions and why. Two deviate from the research that
-   preceded the project, so read them before "fixing" anything that looks wrong.
+5. **[docs/adr/](./docs/adr/)** — nine decisions and why. Two deviate from the research that
+   preceded the project, two more make a Scope narrow what is *captured*, and the last adds a
+   fourth reporting narrowing, so read them before "fixing" anything that looks wrong.
 6. **[docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md](./docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md)**
    — P4's design: the four probe findings that shaped it, and the Correlator's rules stated
    precisely. The summaries elsewhere carry the findings; this carries the reasoning, which is
@@ -48,8 +58,11 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
   versus Maestro's "flow". If you find yourself writing "flow", stop. The only exceptions are
   `capture/addon.py` and `capture/filtering.py`, where `flow` names mitmproxy's own object at
   the boundary.
-- **SPEC.md has drifted from the code in four places and must not be "fixed" to match.** It is
+- **SPEC.md has drifted from the code in ten places and must not be "fixed" to match.** It is
   the v1 specification and a historical record of intent. `docs/USAGE.md` is the API reference.
+  The ten are enumerated once, in
+  [.claude/agents/doc-drift-reviewer.md](./.claude/agents/doc-drift-reviewer.md) — that is where a
+  review reads them from, so a new divergence is recorded there and nowhere else.
 - **`SKILL.md` is deliberately self-contained** — no relative links into this repo — so it works
   copied to `~/.claude/skills/https-proxy-mcp/SKILL.md` on any machine. Do not add links to it.
   It lives at `.claude/skills/https-proxy-mcp/SKILL.md`, where skills go, and there is exactly
@@ -78,7 +91,8 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
 | `capture/session.py` | Session identity, layout, `$HTTPS_PROXY_MCP_ROOT`, retention to 10 |
 | `capture/runtime.py` | `ProxyRuntime` — mitmproxy in this process on the server's event loop |
 | `capture/filtering.py` | mitmproxy filter expressions applied to Exchanges |
-| `capture/reporting.py` | The builtin denylist, the Scope, and the Run window — SPEC.md's three narrowings |
+| `capture/hostsets.py` | What a host entry means, in both forms that need it — the Scope predicate, and mitmproxy's `allow_hosts` patterns |
+| `capture/reporting.py` | The builtin denylist, the Scope, the Run window — SPEC.md's three narrowings — and the Lens, which is the fourth (ADR-0009) |
 | `correlate/steps.py` | `Step` — the entire contract the Correlator depends on |
 | `correlate/timeline.py` | `Occurrence`, owner-plus-overlap arithmetic, `Timeline`. **Pure: no I/O** |
 | `runs/registry.py` | `Run`, `RunRegistry` — identity, directory, manifest |
@@ -164,7 +178,30 @@ Added by P5:
 | The wheel's contents are asserted as an **allowlist of two prefixes** | A denylist reads as more targeted. It would have to name `tests/fixtures/maestro-commands-failing-assert.json` — 123 KB of one device's UI tree — and would not name whatever the next one is. |
 | The clean-install test is parametrised over **interpreters**, not just run once | Looks like thoroughness for its own sake. It is the only thing in the suite that exercises *resolution*, and one interpreter cannot notice a dependency range that two interpreters disagree about. It is what caught the mcp 2.0.0 break. |
 | `requires-python` is pinned to the interpreters under test | Testing configuration looks like ceremony. It closes the loop: lowering the floor without adding the interpreter would ship a promise nobody had tried. |
-| `get_status` is no longer what `INSTRUCTIONS` suggests for an empty result | It was the older advice and it is not wrong, just weakest. `get_status` answers "is capture running", the least likely of the four causes; `diagnose_capture` is the one that separates all four. |
+| `get_status` is no longer what `INSTRUCTIONS` suggests for an empty result | It was the older advice and it is not wrong, just weakest. `get_status` answers "is capture running", the least likely cause of an empty result; `diagnose_capture` is the one that separates them all. |
+
+Added by Passthrough and sentinel ownership (ADR-0007, ADR-0008):
+
+| Decision | Why it looks odd |
+|---|---|
+| A Scope now narrows what is **captured**, not only what is reported | It reads as the opposite of CONTEXT.md's Scope and of `reporting.py`'s whole premise. It is a second concept — Passthrough — and the old sentence is still true of the default. ADR-0007. |
+| `passthrough` defaults to **on** | A default that changes what gets captured looks reckless. It is inert until an agent names a Scope, and the other default silently breaks the developer's browser and every other simulator on the machine. |
+| Passthrough is fed by the Scope alone, never by the builtin denylist | The denylist would spare more chatter and is a *reporting* narrowing whose omissions are deliberate — `googleapis.com` is absent because it is many apps' backend. A wrong entry there costs a hidden row; in a transport decision it costs traffic that was never captured. |
+| Passthrough covers **TLS only**, and plain HTTP is still intercepted | Reads like a bug, and is the engine being honest: a plain-HTTP request does not name its destination until after the layer is chosen. Measured, not assumed — see ADR-0007's consequences. The two cases have opposite remedies, so both are always stated. |
+| The two Scope-exempt tools find nothing for an out-of-scope host | `wait_for_exchanges` and `get_exchange` are exempt on purpose, so this looks like the exemption breaking. Accepted knowingly: it is recoverable by restarting, where the old default was recoverable only by already knowing about it. `diagnose_capture` says so out loud. |
+| The sentinel names a pid **and** an opaque process start time | The start time looks redundant next to a liveness check. It is what stops a rebooted machine's id collision from making the leak permanent — with a pid alone, a self-healing bug becomes a permanent one. |
+| A live foreign owner is **refused**, never taken over or waited for | Taking over is today's bug with better manners; waiting hangs a JSON-RPC session, which is the failure the `sudo -n` non-negotiable exists to avoid. ADR-0008. |
+| There is deliberately **no** force-release tool | Refusing without an escape hatch looks unhelpful. The hatch is `kill <pid>`: the holder's own handlers restore the machine on its way out, and a force-release would restore someone else's recorded state from here. |
+| An unreadable process start time means *dead* | Fail-open looks unsafe. Empty comparing equal to empty would make two unrelated processes look like one, and declining a repair is what leaves the machine proxied through a dead port. |
+| `get_status` reports the proxy whether or not this Session is recording | Session state that answers with no Session looks wrong. The record is on disk and process-independent, and "is my machine still proxied?" is asked exactly when nothing is recording here. |
+
+Added by the machine-wide TLS-failure correction:
+
+| Decision | Why it looks odd |
+|---|---|
+| `tls_failed` names the device and then says the count is not necessarily about it | Naming an actor and disclaiming it in the same sentence reads as hedging. The count genuinely cannot be attributed — loopback leaves no peer address — and a diagnosis that names a specific actor is read as evidence about that actor. The confident version is how this repository came to record the app under test as certificate-pinned when it is not. |
+| Pinning is the *leading candidate*, not the finding | The verdict exists to detect pinning, so demoting it looks like abandoning the feature. It is not demoted: it is still named first, and the cheaper cause — another client on this Mac reaching the same host — is named beside it because that cause is both commoner and free to rule out. |
+| The remediation is three sentences where every other verdict is one | Length is the point. The one-sentence version is what stated a cause as fact; the extra two are the caveat and the check that separates the two causes. |
 
 Added by the harness work:
 
@@ -172,6 +209,19 @@ Added by the harness work:
 |---|---|
 | `mypy` checks `src/` only | Leaving the larger half unchecked looks half-done. Under `--strict` the suite reports ~870 findings, almost all a missing `-> None`; a mechanical edit across 41 files would bury anything real in the same diff. A separate, deliberate commit if it is ever wanted. |
 | mitmproxy's unannotated calls are relaxed **per module**, not per call site | Two named modules in `pyproject.toml` rather than eight inline ignores. The boundary with someone else's library is a real thing and is better named once than rediscovered at each call site — the same reasoning CONTEXT.md uses to allow "flow" in exactly two files. |
+
+Added by the Lens (ADR-0009):
+
+| Decision | Why it looks odd |
+|---|---|
+| The Lens is **Session-level**, where `list_exchanges` takes a per-call `filter` | A parameter on `get_timeline` was the obvious change and was the first one chosen. It is opt-in, and the failure is silent: a Timeline still holding the other simulator's traffic looks exactly like a Timeline. The other three narrowings are Session- or Run-level for the same reason. |
+| `wait_for_exchanges` obeys the Lens while staying exempt from the Scope | Reads as the exemption breaking. The exemption's reasoning is that naming a *host* in a filter is explicit; a Lens says which *client* the traffic came from, and a wait that ignored it is answered by the other simulator's login — the defect the "only traffic recorded after this call" rule already exists to prevent. Kept where the reasoning holds, reversed where it does not. |
+| `get_exchange` stays exempt from the Lens too | Inconsistent with the line above until you notice the difference: an id came from somewhere. A Lens able to veto a fetch by id would make an Exchange id stop meaning anything. |
+| `ReportingFilter` holds a **callable**, not the expression | Looks like indirection for its own sake. Compiling one needs mitmproxy's filter language and a way to read bodies off disk, and `reporting.py` is deliberately free of the engine — the same separation ADR-0007 kept when it declined to fold Passthrough into the Scope. |
+| The Lens is compiled **before the target is built** | It closes over a store that does not exist yet, which reads as a bug. It is the ordering that matters: compiled later, a typo is discovered after the machine's proxy has been redirected and an authority installed into a device. |
+| A Lens cannot narrow the TLS-failure count | Looks like the narrowing being applied inconsistently. It is a predicate over Exchanges, and a failed handshake never became one. The case a Lens exists for is also the case that inflates that count, and a Lens cannot deflate it — stated rather than quietly true. |
+| `start_capture` counts **trust stores**, not traffic | A device census in a traffic tool looks off-topic. Installing the Authority into a second device is what keeps that simulator working, and it is also what puts its bodies unredacted into a Session it is not the Capture Target of. Nothing here can inspect a body and know what is in it; counting trust stores is the honest half, and it appears where the decision is made. |
+| `devices_booted` is **null**, not zero, on the verdicts with no target built | Zero is a number and null is an admission. Answering "0 booted" from a branch that never read a trust store would be a false statement about a machine that may well have three. |
 
 ## Agent skills
 

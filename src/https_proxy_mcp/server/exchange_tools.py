@@ -67,8 +67,13 @@ def register_exchange_tools(server: FastMCP, state: CaptureState) -> None:
         ``cursor`` from the previous response; a ``next_cursor`` of null means that was the end.
 
         OS chatter — Apple and iCloud domains, revocation checks, telemetry ingest — is left
-        out, as is anything outside the Session's Scope. ``hidden`` says how many rows that
-        removed; ``include_denied=true`` shows them. Capture itself is never narrowed.
+        out, and ``include_denied=true`` puts it back. The Session's ``scope`` is left out too and
+        this parameter does **not** lift that: widen the Scope by starting a new Session.
+        ``hidden`` says how many rows were removed — both together by default, and the Scope's alone
+        when ``include_denied`` is true, since the denylist is then not applied.
+
+        A row that is hidden was still captured, so ``get_exchange`` will fetch it by id — unless
+        Passthrough kept it from being captured at all, which is what ``diagnose_capture`` says.
         """
         matching = _narrow(
             list(state.store), host=host, method=method, status=status, since=since, until=until
@@ -214,16 +219,28 @@ def register_exchange_tools(server: FastMCP, state: CaptureState) -> None:
         will not satisfy the wait — otherwise "wait for the login request" would be answered
         by the previous login. A timeout is a result, not an error: ``timed_out`` is true and
         the answer is that it never happened.
+
+        Exempt from the Scope and the denylist, and **not** exempt from the Lens. The exemption
+        exists because naming a host in a filter is explicit and should not be vetoed by a
+        narrowing the agent set earlier; a Lens is the case where that reasoning inverts. Its
+        subject is which client the traffic came from, and a wait that ignored it is answered by
+        the other simulator's login — the same defect the "recorded after this call" rule above
+        exists to prevent, arriving by a different route.
         """
         timeout_ms = max(1, min(timeout_ms, MAX_WAIT_MS))
         matches = _matcher(state, filter)
+        lens = state.lens_predicate
         # Only Exchanges recorded after this instant can satisfy the wait.
         after = state.store.recorded_count
         deadline = time.monotonic() + timeout_ms / 1000
 
         found: list[Exchange] = []
         while time.monotonic() < deadline:
-            found = [item for item in state.store if item.id > after and matches(item)]
+            found = [
+                item
+                for item in state.store
+                if item.id > after and (lens is None or lens(item)) and matches(item)
+            ]
             if len(found) >= min_count:
                 break
             await asyncio.sleep(WAIT_POLL_S)
@@ -232,6 +249,10 @@ def register_exchange_tools(server: FastMCP, state: CaptureState) -> None:
             "timed_out": len(found) < min_count,
             "timeout_ms": timeout_ms,
             "filter": filter,
+            # Named beside the filter because a timeout is the result that most needs explaining,
+            # and "it did happen, the Lens excluded it" is otherwise indistinguishable from "it
+            # never happened" — which is the whole answer this tool exists to give.
+            "lens": state.lens,
             "min_count": min_count,
             "returned": len(found),
             "exchanges": [exchange_summary(item) for item in found],

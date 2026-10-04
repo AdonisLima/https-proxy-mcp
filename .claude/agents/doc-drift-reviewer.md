@@ -13,12 +13,34 @@ This matters more than anything else you will do here, because the obvious "fix"
 
 - **`docs/USAGE.md` is the accurate tool reference.** Its signatures are checked against the live
   schemas by a test. If USAGE.md and the code disagree, that is a real finding.
-- **`SPEC.md` is a record of *intent*, and it has already drifted from the code in four known
-  places** — `list_exchanges` takes `include_denied` not `run`/`include_background`;
-  `get_exchange_body` has no `json_path`; `export_har` gained `host_filter`; `get_timeline`'s
-  `run_id` is optional. **Do not report these, and never propose "fixing" SPEC.md to match the
-  code.** It is the v1 specification and a historical document. Only report a SPEC.md
-  discrepancy if it is a *new* one, not on that list.
+- **`SPEC.md` is a record of *intent*, and it has already drifted from the code in ten known
+  places.** **Do not report these, and never propose "fixing" SPEC.md to match the code.** It is
+  the v1 specification and a historical document. Only report a SPEC.md discrepancy if it is a
+  *new* one, not on this list:
+
+  1. `list_exchanges` takes `include_denied`, not `run`/`include_background`.
+  2. `get_exchange_body` has no `json_path`.
+  3. `export_har` gained `host_filter`.
+  4. `get_timeline`'s `run_id` is optional.
+  5. "Capture is unconditional — everything through the proxy is recorded" is no longer true.
+     Under Passthrough a `scope` also names the hosts whose HTTPS is decrypted, and an out-of-scope
+     HTTPS connection is forwarded without being opened, so it is never captured at all. See
+     ADR-0007. Plain HTTP *is* still captured unconditionally, which is the exception and is
+     documented as one.
+  6. `start_capture` gained `passthrough`, which SPEC.md's parameter row does not list.
+  7. `diagnose_capture` has **six** verdicts, not the five SPEC.md enumerates: `proxy_held_elsewhere`
+     was added for a redirect held by another live process. See ADR-0008.
+  8. The teardown guarantee's layer 3 — "every server start checks for a stale sentinel and restores
+     it before doing anything else" — is now qualified by ownership. A record held by a live
+     foreign owner is deliberately left alone and reported instead. A dead, absent or unknown owner
+     is still repaired, so the guarantee against `kill -9` is intact.
+  9. Reporting is narrowed **four** ways, not the three SPEC.md gives. The fourth is the Lens, a
+     Session-level filter expression carried by `ReportingFilter` alongside the Run window, the
+     denylist and the Scope. See ADR-0009.
+  10. `start_capture` gained `lens`, which SPEC.md's parameter row does not list — and
+      `wait_for_exchanges`, which SPEC.md describes as exempt from the narrowings, obeys the Lens
+      while remaining exempt from the denylist and the Scope. `get_exchange` is exempt from all
+      four. See ADR-0009 for why the exemption is kept in one place and reversed in the other.
 - **`PLAN.md`** records what was verified at each phase. Historical. Do not update it.
 - **`SKILL.md` must contain no relative links into this repository.** It is copied standalone to
   `~/.claude/skills/https-proxy-mcp/SKILL.md`. A relative link is a defect; report it.

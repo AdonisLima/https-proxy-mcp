@@ -8,6 +8,7 @@ trivial local target used to exercise the core without any mobile tooling.
 from collections.abc import Callable
 
 from https_proxy_mcp.targets.base import (
+    AuthorityCensus,
     CaptureObservations,
     CaptureTarget,
     Diagnosis,
@@ -65,6 +66,7 @@ def build_target(name: str, **options: object) -> CaptureTarget:
 
 
 __all__ = [
+    "AuthorityCensus",
     "CaptureObservations",
     "CaptureTarget",
     "CurlTarget",

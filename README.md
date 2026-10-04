@@ -82,14 +82,18 @@ setting of its own — it inherits the host's — so `start_capture` redirects t
 proxy, which affects every application until `stop_capture`. Your prior settings are written to
 `~/.https-proxy-mcp/proxy-state.json` *before* anything changes, restored on exit, and restored
 by the next server start if this one is killed outright. `get_status` tells you whether the
-proxy is currently redirected.
+proxy is currently redirected, and which process did it — one process may hold that redirect at a
+time, so a second editor window's `start_capture` is refused rather than taking it over.
 
-One consequence is worth knowing: in regular proxy mode there is no process attribution, so
-your other applications go through the proxy too and their TLS handshakes fail against it —
-they have no reason to trust the authority, which is installed only into the simulator. That is
-harmless and expected. It also means a failed handshake can only be attributed to the app under
-test when you set a `scope` naming its hosts, which is what `diagnose_capture` needs before it
-will report pinning.
+**Name a `scope`, and the rest of your machine is left alone.** In regular proxy mode there is no
+process attribution, so every application on the Mac goes through the proxy. A `scope` names the
+hosts you care about, and with `passthrough` on by default those are the only hosts whose HTTPS is
+decrypted — every other connection is forwarded untouched, carrying the real certificate, so your
+browser and any other booted simulator carry on as normal. Without a `scope`, everything is
+intercepted and every other application's TLS handshakes fail against the proxy, because they have no
+reason to trust an authority installed only into the simulator. A `scope` is also what lets a failed
+handshake be attributed to the app under test, which `diagnose_capture` needs before it will report
+pinning.
 
 **Traffic is attributed by overlap, not assignment.** An Exchange is *owned* by the Step that was
 active when it started — that Step caused it — and every other Step it overlaps is recorded too. A

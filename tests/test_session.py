@@ -98,6 +98,7 @@ def test_the_manifest_records_the_session(tmp_path):
         scope=["api.example.com"],
         udid="F48AAE9F-4D3F-4817-9050-7B4B0024CF07",
         passthrough=True,
+        lens="~hq X-Sim: sidekick",
         now=at(10),
     )
 
@@ -114,6 +115,10 @@ def test_the_manifest_records_the_session(tmp_path):
         "passthrough": True,
         # Recorded so a Session directory found later says which simulator produced it.
         "udid": "F48AAE9F-4D3F-4817-9050-7B4B0024CF07",
+        # The expression, not anything compiled from it: a manifest is read by people, and
+        # "which Exchanges was this Session even willing to show me?" is not answerable from
+        # the Exchange log alone.
+        "lens": "~hq X-Sim: sidekick",
     }
 
 
