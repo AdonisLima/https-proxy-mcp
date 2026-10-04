@@ -75,6 +75,48 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+
+      # Same sensor as the test job: a manifest edit that never reached the lock fails here,
+      # before the audit below reads a resolution that does not exist.
+      - name: Sync from the lock
+        run: uv sync --locked
+
+      # The one question no other gate asks: does the locked resolution carry known
+      # vulnerabilities? The manifest declares dependency resolution load-bearing — a wheel
+      # ships no lock, so the ceilings in pyproject.toml are all a consumer sees — yet nothing
+      # inspected what resolution produced. Here and on Linux at 1x because auditing needs no
+      # macOS.
+      #
+      # `uv audit` is the intended command and is still preview — the pinned uv (0.10.4) has
+      # no `audit` subcommand — so this runs the documented fallback, pip-audit against the
+      # synced environment, which the locked sync above makes exactly the locked resolution.
+      # Swap back when the pinned uv ships audit.
+      #
+      # The ignores are argued for individually, not a blanket: every finding as of 2026-09-16
+      # is a transitive dependency whose fixed version is excluded by mitmproxy 12.2.3's own
+      # ceilings (h2, msgpack and tornado outright; cryptography's by pyopenssl's `<49` on
+      # top), and mitmproxy itself is deliberately capped at <13 — overriding those ceilings
+      # would reopen a recorded decision. The fix path is a mitmproxy release, so each ignore
+      # is re-examined on a mitmproxy bump rather than carried forward.
+      - name: Audit the locked dependencies
+        run: |
+          uv run --with pip-audit pip-audit \
+            --ignore-vuln PYSEC-2026-3552 \
+            --ignore-vuln PYSEC-2026-3553 \
+            --ignore-vuln PYSEC-2026-3554 \
+            --ignore-vuln PYSEC-2026-3625 \
+            --ignore-vuln PYSEC-2026-3628 \
+            --ignore-vuln PYSEC-2026-3387 \
+            --ignore-vuln PYSEC-2026-3388 \
+            --ignore-vuln PYSEC-2026-3389 \
+            --ignore-vuln PYSEC-2026-3928 \
+            --ignore-vuln GHSA-8423-8fgw-73vq \
+            --ignore-vuln GHSA-pw6j-qg29-8w7f \
+            --ignore-vuln GHSA-wwv5-g3v4-889x
+
       # Pinned exactly. An unpinned major could add checks and fail a build for a reason that
       # has nothing to do with the commit that triggered it.
       - name: Score the harness
