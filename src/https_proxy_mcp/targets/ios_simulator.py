@@ -166,7 +166,7 @@ class IosSimulatorTarget:
         captures plain HTTP, and ``diagnose_capture`` can then say exactly what is wrong. Making
         it fatal would turn a diagnosable state into an unexplained start failure.
         """
-        pem = ensure_authority(self._confdir)
+        pem = self.authority_pem()
 
         try:
             device = self._resolve()

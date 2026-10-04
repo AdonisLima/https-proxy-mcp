@@ -19,8 +19,9 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from https_proxy_mcp.capture.session import CONFDIR_NAME
 from https_proxy_mcp.server.state import CaptureState
-from https_proxy_mcp.targets.ios_simulator import IosSimulatorTarget
+from https_proxy_mcp.targets.simctl import ensure_authority
 
 #: Where a machine-wide authority goes.
 SYSTEM_KEYCHAIN = "/Library/Keychains/System.keychain"
@@ -91,8 +92,7 @@ def register_trust_tools(server: FastMCP, state: CaptureState) -> None:
         This will not prompt for a password. If ``sudo`` credentials are not already cached the
         call fails harmlessly and returns the exact command to run in a terminal instead.
         """
-        target = IosSimulatorTarget(root=state.root, runner=state.runner)
-        pem = str(target.authority_pem())
+        pem = str(ensure_authority(state.root / CONFDIR_NAME))
 
         try:
             state.runner(system_install_command(pem, non_interactive=True))
