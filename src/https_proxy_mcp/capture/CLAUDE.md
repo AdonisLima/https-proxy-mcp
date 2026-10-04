@@ -13,6 +13,19 @@ object at the boundary.
   coroutine; `asyncio.create_task` it. This is what makes ADR-0001's single process work.
 - **`mode=["regular@127.0.0.1:0"]` binds an ephemeral port on loopback only**, and
   `addons.get("proxyserver").listen_addrs()` reports what it got. Never hard-code a port.
+- **mitmproxy never stops its own web server.** `Master.shutdown()` only signals the master; the
+  tornado HTTPServer is a local in `WebMaster.running()` that nothing keeps, because in `mitmweb`
+  the process exits first. In this long-lived process that leaks a listener per Session, which is
+  why `_WebProxyMaster` exists: it keeps the reference and `stop()` closes it. The subclass
+  replicates the pinned master's startup body on purpose — awaiting `WebMaster.running()` would
+  listen twice — and the guards are the dependency's upper bound and the test that asserts the web
+  port is released.
+- **A failed web listen leaks the proxy port too, unless the subclass clears it first.**
+  `Master.run()` binds the proxy servers *before* `running()`, and proxyserver only answers a
+  `mode` change once its RunningHook has fired — which the re-raised listen error pre-empts, so
+  the usual `mode=[]` release never happens. `_WebProxyMaster` awaits
+  `proxyserver.servers.update([])` before re-raising. Found by the occupied-web-port test, not by
+  reading: without it the failed start left the *proxy* port bound behind it.
 - **`Message.get_content(strict=True)` — the default — raises `ValueError` on a malformed
   `Content-Encoding`.** Capture must pass `strict=False`, so one bad header cannot end a Session.
 - **The store gets written to after `close()`.** Connections still in flight when `stop_capture`

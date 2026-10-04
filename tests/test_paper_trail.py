@@ -54,6 +54,7 @@ NUMBER_WORDS = {
     9: "nine",
     10: "ten",
     11: "eleven",
+    12: "twelve",
 }
 
 #: The claim Passthrough falsified, in the three forms this repository wrote it in.

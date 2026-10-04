@@ -178,7 +178,16 @@ def test_the_skill_names_every_parameter_start_capture_takes():
     """
     skill = SKILL.read_text()
 
-    for parameter in ("target", "port", "scope", "udid", "passthrough"):
+    for parameter in (
+        "target",
+        "port",
+        "scope",
+        "udid",
+        "passthrough",
+        "lens",
+        "web_ui",
+        "web_port",
+    ):
         assert parameter in skill, parameter
 
 

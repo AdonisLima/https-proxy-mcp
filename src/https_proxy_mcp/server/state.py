@@ -386,6 +386,8 @@ class CaptureState:
         udid: str | None = None,
         passthrough: bool = True,
         lens: str | None = None,
+        web_ui: bool = False,
+        web_port: int = 0,
         capacity: int = ExchangeStore.DEFAULT_CAPACITY,
     ) -> dict[str, Any]:
         """Begin a Session: prune, prepare the target, start the proxy, then route to it."""
@@ -455,6 +457,8 @@ class CaptureState:
             port=port,
             confdir=self._root / CONFDIR_NAME,
             intercept_hosts=intercept_hosts,
+            web_ui=web_ui,
+            web_port=web_port,
         )
 
         try:
@@ -492,6 +496,9 @@ class CaptureState:
             # and every Timeline will show, and an agent reading an empty result should be able to
             # see that it asked for one rather than have to remember.
             "lens": session.lens,
+            # The Human View's token-gated URL, verbatim from the runtime — or null when it was
+            # not asked for. The developer opens this; nothing else in the response names where.
+            "web_url": runtime.web_url,
             "session_dir": str(session.dir),
             "trust": self._trust,
             **_census_dict(census, capture_target_trusts=trust.trusted),
@@ -535,6 +542,10 @@ class CaptureState:
                 "recording": False,
                 "detail": NOT_RECORDING,
                 "sessions_root": str(self._root),
+                # Same keys from every branch: an agent reading `web_url` off the not-recording
+                # branch — exactly the branch reached when something is wrong — must get null
+                # rather than a KeyError.
+                "web_url": None,
                 # Reported here as well as while recording, and this is the branch that matters:
                 # the machine can be proxied by a process that is gone or by another editor
                 # window, and "is my machine still proxied?" is asked precisely when this Session
@@ -553,6 +564,9 @@ class CaptureState:
             "target": self._session.target,
             "scope": list(self._session.scope) if self._session.scope is not None else None,
             "lens": self._session.lens,
+            # Reported here as well as in the start response, so the URL is recoverable after
+            # the response that carried it is long gone.
+            "web_url": self._runtime.web_url,
             "exchanges": self._store.recorded_count,
             "retained": len(self._store),
             "evicted": self._store.evicted_count,

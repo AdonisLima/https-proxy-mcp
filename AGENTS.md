@@ -19,7 +19,7 @@ be separated by any narrowing that works on hosts.
 ## Verify
 
 ```bash
-uv run pytest -q          # 951 passed, 3 skipped, ~48s
+uv run pytest -q          # 1014 passed, 3 skipped, ~55s
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy               # strict, src/ only
@@ -42,9 +42,10 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
    live schemas by a test, which SPEC.md's table is not.
 3. **[docs/SPEC.md](./docs/SPEC.md)** — the v1 spec. A record of *intent*; its tool table has drifted.
 4. **[docs/PLAN.md](./docs/PLAN.md)** — six phases with acceptance criteria, all six met.
-5. **[docs/adr/](./docs/adr/)** — nine decisions and why. Two deviate from the research that
-   preceded the project, two more make a Scope narrow what is *captured*, and the last adds a
-   fourth reporting narrowing, so read them before "fixing" anything that looks wrong.
+5. **[docs/adr/](./docs/adr/)** — ten decisions and why. Two deviate from the research that
+   preceded the project, two more make a Scope narrow what is *captured*, the ninth adds a fourth
+   reporting narrowing, and the tenth serves a Human View from the proxy core, so read them before
+   "fixing" anything that looks wrong.
 6. **[docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md](./docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md)**
    — P4's design: the four probe findings that shaped it, and the Correlator's rules stated
    precisely. The summaries elsewhere carry the findings; this carries the reasoning, which is
@@ -58,9 +59,9 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
   versus Maestro's "flow". If you find yourself writing "flow", stop. The only exceptions are
   `capture/addon.py` and `capture/filtering.py`, where `flow` names mitmproxy's own object at
   the boundary.
-- **SPEC.md has drifted from the code in eleven places and must not be "fixed" to match.** It is
+- **SPEC.md has drifted from the code in twelve places and must not be "fixed" to match.** It is
   the v1 specification and a historical record of intent. `docs/USAGE.md` is the API reference.
-  The eleven are enumerated once, in
+  The twelve are enumerated once, in
   [.claude/agents/doc-drift-reviewer.md](./.claude/agents/doc-drift-reviewer.md) — that is where a
   review reads them from, so a new divergence is recorded there and nowhere else.
 - **`SKILL.md` is deliberately self-contained** — no relative links into this repo — so it works
@@ -89,7 +90,7 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
 | `capture/store.py` | `ExchangeStore` — ring buffer, eviction counter, body spill, append-only log, `0700`, TLS-failure counter, **pending registry** |
 | `capture/addon.py` | `CaptureAddon` — the only module that knows mitmproxy's flow shapes |
 | `capture/session.py` | Session identity, layout, `$HTTPS_PROXY_MCP_ROOT`, retention to 10 |
-| `capture/runtime.py` | `ProxyRuntime` — mitmproxy in this process on the server's event loop |
+| `capture/runtime.py` | `ProxyRuntime` — mitmproxy in this process on the server's event loop; `_WebProxyMaster` and the opt-in Human View |
 | `capture/filtering.py` | mitmproxy filter expressions applied to Exchanges |
 | `capture/hostsets.py` | What a host entry means, in both forms that need it — the Scope predicate, and mitmproxy's `allow_hosts` patterns |
 | `capture/reporting.py` | The builtin denylist, the Scope, the Run window — SPEC.md's three narrowings — and the Lens, which is the fourth (ADR-0009) |
@@ -222,6 +223,13 @@ Added by the Lens (ADR-0009):
 | A Lens cannot narrow the TLS-failure count | Looks like the narrowing being applied inconsistently. It is a predicate over Exchanges, and a failed handshake never became one. The case a Lens exists for is also the case that inflates that count, and a Lens cannot deflate it — stated rather than quietly true. |
 | `start_capture` counts **trust stores**, not traffic | A device census in a traffic tool looks off-topic. Installing the Authority into a second device is what keeps that simulator working, and it is also what puts its bodies unredacted into a Session it is not the Capture Target of. Nothing here can inspect a body and know what is in it; counting trust stores is the honest half, and it appears where the decision is made. |
 | `devices_booted` is **null**, not zero, on the verdicts with no target built | Zero is a number and null is an admission. Answering "0 booted" from a branch that never read a trust store would be a false statement about a machine that may well have three. |
+
+Added by the Human View (ADR-0010):
+
+| Decision | Why it looks odd |
+|---|---|
+| The Human View is a **write console** showing the core's own unnarrowed, unredacted view | Looks like two defects at once: a surface with no write tools serving a UI that can intercept, modify and replay, and a redaction boundary with a hole in it. Both are deliberate. The console is a human's hands on their own Session — the pinned mitmproxy has no read-only web mode, so it is accepted and documented, never locked down — and the bodies already sit unredacted in the Session's own directory; the redaction boundary is the model and export surface, not the human. Edits made there can make a Timeline lie and can break teardown, and the docs say so. |
+| The teardown subclass `_WebProxyMaster` **replicates the pinned master's startup body** | Copying library internals looks fragile, and it is — guarded two ways on purpose: the dependency's upper bound (`mitmproxy>=11,<13`, and a wheel ships no lock file) and the test that asserts the web port is released. The library never stops its own web server because in `mitmweb` the process exits first; a Session ends without this process ending, so the reference the library drops is kept here. |
 
 ## Agent skills
 

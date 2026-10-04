@@ -25,6 +25,8 @@ def register_session_tools(server: FastMCP, state: CaptureState) -> None:
         udid: str | None = None,
         passthrough: bool = True,
         lens: str | None = None,
+        web_ui: bool = False,
+        web_port: int = 0,
     ) -> dict[str, Any]:
         """Begin capturing HTTPS traffic into a new Session.
 
@@ -66,6 +68,16 @@ def register_session_tools(server: FastMCP, state: CaptureState) -> None:
         expression still parses and then matches nothing at all. ``get_exchange`` stays exempt,
         because an id came from somewhere.
 
+        ``web_ui=True`` serves the **Human View**: the mitmweb UI from this Session's own proxy
+        core, live, on loopback. The response carries its token-gated URL — open it in a browser
+        to watch the capture yourself. ``web_port=0`` picks a free port and the response says
+        which; pin it when a bookmarked URL should survive across Sessions.
+
+        The view is the core's own, not the tool surface's: no denylist, ``scope``, ``lens`` or
+        Run windows narrow it, and bodies are unredacted (they already sit unredacted on disk).
+        It is also a write console — intercept, modify, replay — and edits made there can make a
+        Timeline lie and can break teardown. It dies with ``stop_capture``.
+
         If nothing appears afterwards, call ``diagnose_capture`` rather than guessing: it tells
         an untrusted authority apart from certificate pinning apart from an app that simply has
         not made a request yet.
@@ -77,6 +89,8 @@ def register_session_tools(server: FastMCP, state: CaptureState) -> None:
             udid=udid,
             passthrough=passthrough,
             lens=lens,
+            web_ui=web_ui,
+            web_port=web_port,
         )
 
     # Written after the fact so the available targets stay true as P3 adds the simulator.

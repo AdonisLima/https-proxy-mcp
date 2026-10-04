@@ -30,6 +30,12 @@ connection on the machine is forwarded untouched and the developer's browser and
 carry on working. Name no `scope` and everything is intercepted, which breaks their browser for as
 long as you are recording. See "What this changes on the machine" below.
 
+**Want to watch the capture yourself?** `start_capture(web_ui=True)` serves the Human View — the
+mitmweb UI from the Session's own proxy core, live on loopback — and the response carries its
+token-gated URL to open in a browser; `web_port` pins it, where `0` (the default) picks a free one.
+It is the core's view, so nothing narrows it and bodies are unredacted, and it is a write console
+whose edits can make a Timeline lie. It dies with `stop_capture`.
+
 `run_test` sets Maestro's output flags for you and points them at the Run's own directory, so
 Maestro's steps are found automatically. A non-zero exit is a **result**, not an error: a failing
 test is the normal reason to be here.

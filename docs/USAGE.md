@@ -14,6 +14,7 @@ throughout — Exchange, Step, Run, Scope, Timeline — see [CONTEXT.md](../CONT
 - [Inspecting traffic](#inspecting-traffic)
 - [Waiting for a request](#waiting-for-a-request)
 - [Cutting the noise](#cutting-the-noise)
+- [Watching the capture yourself](#watching-the-capture-yourself)
 - [When nothing appears](#when-nothing-appears)
 - [Secrets](#secrets)
 - [Exporting](#exporting)
@@ -44,6 +45,7 @@ Timeline.
   "scope": null,
   "passthrough": false,
   "lens": null,
+  "web_url": null,
   "session_dir": "…/sessions/20260805T232937-174020",
   "trust": { "trusted": true, "detail": "nothing to trust: curl is pointed at the proxy with -x, …" },
   "devices_booted": 0,
@@ -368,6 +370,39 @@ narrowings are no longer the whole story:
 The distinction matters because the two look identical in a listing and have opposite remedies:
 one needs a new Session, the other needs an id.
 
+## Watching the capture yourself
+
+Everything above is the model's view: summary-first, redacted, narrowed by design. Sometimes the
+human wants to watch the capture directly — scroll the requests, open a body, follow along while
+an agent drives the app. Pass `web_ui=True` and the Session's own proxy core serves the **Human
+View** — the mitmweb UI, live, on loopback — from the same core that records into the Session:
+
+```
+start_capture(target="ios-simulator", udid="…", scope=["api.example.com"], web_ui=True)
+```
+
+The response carries the URL, gated by a per-Session token, as `web_url`
+(`http://127.0.0.1:<port>/?token=…`). Open it in a browser and requests appear as they happen —
+what you scroll and what a Timeline says are two readings of one event stream. `web_port=0` (the
+default) picks a free port and the response says which, so two Sessions in a row never collide;
+pin `web_port` when a bookmarked URL should survive across Sessions. An occupied `web_port` fails
+the start cleanly — no half-started proxy is left holding the capture port. `get_status` carries
+`web_url` while recording, so the URL is recoverable after the start response is lost, and the
+view dies with `stop_capture`.
+
+Two things the view is **not**, both deliberate:
+
+- **It is the core's view, not the tool surface's.** No denylist, `scope`, `lens` or Run window
+  narrows it — out-of-`scope` plain HTTP that the listings hide is visible there — and bodies are
+  unredacted. That is not a hole in the redaction boundary: the boundary is the model and export
+  surface, and the bodies already sit unredacted in the Session's own directory. It is what lets
+  you answer "is my app sending the right token?" yourself, the question the redacted surface
+  deliberately cannot.
+- **It is a write console.** Intercept, modify, replay — the pinned mitmproxy has no read-only
+  web mode, so the console is accepted and documented rather than locked down. Edits made there
+  can make a Timeline lie and can break teardown: a Session you edited by hand may stop cleanly
+  but read wrong.
+
 ## When nothing appears
 
 **Call `diagnose_capture` before concluding there was no traffic.** Six verdicts, and everything but
@@ -443,7 +478,7 @@ Exchanges have been seen:
   "recording": true, "session": "20260805T232946-242740", "port": 53430,
   "target": "curl", "scope": null,
   "exchanges": 1, "retained": 1, "evicted": 0, "tls_failures": 0, "pending": 0,
-  "runs": [], "open_step": null,
+  "runs": [], "open_step": null, "web_url": null,
   "trust": { "trusted": true, "detail": "…" },
   "proxy": { "redirected": false, "detail": "the system proxy is not redirected" }
 }
@@ -557,7 +592,7 @@ Twenty tools. Signatures are the real ones; defaults are shown where they exist.
 
 | Tool | Notes |
 |---|---|
-| `start_capture(target, port, scope, udid, passthrough, lens)` | `target="curl"`, `port=8080`, `passthrough=True`. `port=0` binds an ephemeral one and reports it. With a `scope`, `passthrough` decrypts only those hosts' HTTPS and forwards every other TLS connection untouched; plain HTTP is captured regardless. `lens` is a filter expression narrowing every later report, including `get_timeline` and `wait_for_exchanges`. Refused while another live process holds the machine's proxy. Required before any other traffic tool |
+| `start_capture(target, port, scope, udid, passthrough, lens, web_ui, web_port)` | `target="curl"`, `port=8080`, `passthrough=True`. `port=0` binds an ephemeral one and reports it. With a `scope`, `passthrough` decrypts only those hosts' HTTPS and forwards every other TLS connection untouched; plain HTTP is captured regardless. `lens` is a filter expression narrowing every later report, including `get_timeline` and `wait_for_exchanges`. `web_ui=True` serves the Human View — mitmweb from the Session's own core, token-gated, unnarrowed and unredacted, a write console; `web_port=0` picks a free port and the response names it in `web_url`. Refused while another live process holds the machine's proxy. Required before any other traffic tool |
 | `stop_capture()` | Releases the port and undoes any routing. Always call it |
 | `get_status()` | Recording state, counts, Scope, Lens, trust, `open_step`, and `proxy` — which includes the redirect's `owner` and is answered even when not recording |
 | `diagnose_capture()` | The six verdicts above, plus the counts they came from and the device census |

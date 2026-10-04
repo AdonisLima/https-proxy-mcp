@@ -42,6 +42,14 @@ _Avoid_: filter (a Scope already lists that word as one to avoid, and a second u
 two unstateable apart), query, view (a Timeline is already the view over a Session), device filter
 (it narrows by what a request states about itself, never by anything the proxy worked out)
 
+**Human View**:
+The mitmweb UI served by a Session's own proxy core, live on loopback behind a per-Session token.
+The core's view, not the tool surface's: no denylist, Scope, Lens or Run window narrows it, and
+bodies are unredacted. It is also a write console, and edits made in it can make a Timeline lie
+and can break teardown.
+_Avoid_: mitmweb (the library's name for the same UI run as its own process — a second process
+would be its own empty core, which is the option ADR-0010 rejected), web UI, preview
+
 ### Testing
 
 **Run**:

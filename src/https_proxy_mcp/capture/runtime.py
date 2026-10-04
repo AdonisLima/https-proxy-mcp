@@ -5,7 +5,7 @@ with no IPC and no file round-trip for live queries. This module is where that c
 cashed in: :class:`DumpMaster` runs as an asyncio task alongside the MCP server, and the
 addon it carries writes into the very store the tools read from.
 
-Three details here were found by experiment rather than reading, and each would be a bug if
+Four details here were found by experiment rather than reading, and each would be a bug if
 guessed differently:
 
 * **Clearing the ``mode`` option is what closes the listener.** ``master.shutdown()`` stops
@@ -19,6 +19,12 @@ guessed differently:
   cheap way never to find out, and no test can guard it: keep it that way on purpose.
 * **Port 0 works and reports back.** ``listen_addrs()`` gives the port actually bound, which
   is what lets a caller ask for "any free port" and still be told which one.
+* **The library never stops its web server; the runtime does.** In ``mitmweb`` the process
+  exits first, so the tornado HTTP server has no shutdown path at all — ``shutdown()`` only
+  signals the master, and the server object is a local nobody keeps. In this long-lived
+  process that leaks a listener per Session, so :class:`_WebProxyMaster` keeps the reference
+  and ``stop()`` closes it. The subclass replicates the pinned master's startup body on
+  purpose; the dependency's upper bound and the web-port release test are the guard.
 
 Passthrough (CONTEXT.md) is the one decision here that is not about lifecycle. ``intercept_hosts``
 names the hosts to decrypt, and every other **TLS** connection is forwarded without being opened —
@@ -37,10 +43,16 @@ definition the Scope predicate answers from; nothing here writes one.
 from __future__ import annotations
 
 import asyncio
+import errno
+import socket
 from pathlib import Path
 
+import tornado.httpserver
+import tornado.ioloop
+from mitmproxy.master import Master
 from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
+from mitmproxy.tools.web.master import WebMaster
 
 from https_proxy_mcp.capture.addon import CaptureAddon
 from https_proxy_mcp.capture.hostsets import allow_host_patterns
@@ -56,6 +68,62 @@ START_TIMEOUT_S = 30.0
 STOP_TIMEOUT_S = 15.0
 
 
+def _free_loopback_port() -> int:
+    """A port that was free a moment ago.
+
+    tornado would bind an ephemeral port itself, but mitmproxy never reads it back, so the
+    reported URL would name port 0. The bind-close race is accepted: on losing it the listen
+    error surfaces and ``start()``'s half-started cleanup runs.
+    """
+    with socket.socket() as probe:
+        probe.bind((LISTEN_HOST, 0))
+        return int(probe.getsockname()[1])
+
+
+class _WebProxyMaster(WebMaster):
+    """A WebMaster that keeps the reference mitmproxy drops, so the web server can be stopped.
+
+    ``WebMaster.running()`` binds the tornado HTTP server into a local and nothing ever stops
+    it — in ``mitmweb`` the process exits first. A Session ends without this process ending, so
+    the server is kept on the instance and ``stop_web()`` closes it. The body below mirrors the
+    pinned master's, ending at the grandparent's ``running()``: awaiting
+    ``WebMaster.running()`` would listen twice.
+    """
+
+    def __init__(self, opts: Options) -> None:
+        super().__init__(opts, with_termlog=False)
+        self._http_server: tornado.httpserver.HTTPServer | None = None
+
+    async def running(self) -> None:
+        tornado.ioloop.IOLoop.current()
+        self._http_server = tornado.httpserver.HTTPServer(self.app, max_buffer_size=2**32)  # 4GB
+        try:
+            self._http_server.listen(self.options.web_port, self.options.web_host)
+        except OSError as e:
+            # The proxy servers are already bound at this point (Master.run sets them up
+            # before running()), and proxyserver only answers a mode change once its
+            # RunningHook has fired — which the raise below pre-empts. Close them here or
+            # the failed start leaves the proxy port bound behind it.
+            await self.proxyserver.servers.update([])
+            message = (
+                f"Web server failed to listen on"
+                f" {self.options.web_host or '*'}:{self.options.web_port} with {e}"
+            )
+            if e.errno == errno.EADDRINUSE:
+                message += (
+                    f"\nTry specifying a different port by using"
+                    f" `--set web_port={self.options.web_port + 2}`."
+                )
+            raise OSError(e.errno, message, e.filename) from e
+        await Master.running(self)
+
+    def stop_web(self) -> None:
+        """Close the web listener. Safe before ``running()`` or after a failed listen."""
+        if self._http_server is not None:
+            self._http_server.stop()
+            self._http_server = None
+
+
 class ProxyRuntime:
     """An in-process mitmproxy, recording into the store the tool surface reads."""
 
@@ -67,6 +135,8 @@ class ProxyRuntime:
         confdir: Path | str,
         host: str = LISTEN_HOST,
         intercept_hosts: tuple[str, ...] | None = None,
+        web_ui: bool = False,
+        web_port: int = 0,
     ) -> None:
         self._store = store
         self._requested_port = port
@@ -77,7 +147,9 @@ class ProxyRuntime:
         # everything" — naming no hosts to decrypt is not something a caller can express, and
         # `hostsets` leaves that decision to whoever computes the set (`server/state.py`).
         self._allow_hosts = list(allow_host_patterns(intercept_hosts)) if intercept_hosts else []
-        self._master: DumpMaster | None = None
+        self._web_ui = web_ui
+        self._requested_web_port = web_port
+        self._master: DumpMaster | _WebProxyMaster | None = None
         self._task: asyncio.Task[None] | None = None
         self._port: int | None = None
 
@@ -98,6 +170,14 @@ class ProxyRuntime:
             raise RuntimeError("the proxy is not running, so it has no port")
         return self._port
 
+    @property
+    def web_url(self) -> str | None:
+        """The token-gated URL of the Human View, or None when it was not asked for or is down."""
+        master = self._master
+        if not isinstance(master, _WebProxyMaster):
+            return None
+        return master.web_url
+
     # --- lifecycle ------------------------------------------------------------
 
     async def start(self) -> None:
@@ -107,17 +187,29 @@ class ProxyRuntime:
 
         self._confdir.mkdir(parents=True, exist_ok=True)
 
-        # with_termlog and with_dumper off: this process speaks MCP on stdout, and a proxy
-        # that logs there would corrupt the protocol framing.
-        master = DumpMaster(Options(), with_termlog=False, with_dumper=False)
-        master.options.update(
-            confdir=str(self._confdir),
-            mode=[f"regular@{self._host}:{self._requested_port}"],
-            # Passthrough: empty is mitmproxy's "decrypt everything", which is what an unscoped
-            # Session wants. Set unconditionally rather than only when non-empty, so the option a
-            # started proxy carries is always this object's own decision.
-            allow_hosts=self._allow_hosts,
-        )
+        if self._web_ui:
+            master: DumpMaster | _WebProxyMaster = _WebProxyMaster(Options())
+            master.options.update(
+                confdir=str(self._confdir),
+                mode=[f"regular@{self._host}:{self._requested_port}"],
+                allow_hosts=self._allow_hosts,
+                web_host=LISTEN_HOST,
+                web_port=self._requested_web_port or _free_loopback_port(),
+                # This server is headless and agent-driven; it must never pop a browser.
+                web_open_browser=False,
+            )
+        else:
+            # with_termlog and with_dumper off: this process speaks MCP on stdout, and a proxy
+            # that logs there would corrupt the protocol framing.
+            master = DumpMaster(Options(), with_termlog=False, with_dumper=False)
+            master.options.update(
+                confdir=str(self._confdir),
+                mode=[f"regular@{self._host}:{self._requested_port}"],
+                # Passthrough: empty is mitmproxy's "decrypt everything", which is what an
+                # unscoped Session wants. Set unconditionally rather than only when non-empty, so
+                # the option a started proxy carries is always this object's own decision.
+                allow_hosts=self._allow_hosts,
+            )
         master.addons.add(CaptureAddon(self._store))
 
         self._master = master
@@ -163,6 +255,9 @@ class ProxyRuntime:
         # Clearing the mode is what closes the listener; shutdown alone leaves it bound.
         master.options.update(mode=[])
         master.shutdown()
+        if isinstance(master, _WebProxyMaster):
+            # The library never stops its own web server — in mitmweb the process exits first.
+            master.stop_web()
 
         if task is not None:
             try:

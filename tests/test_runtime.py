@@ -11,11 +11,15 @@ Marked `integration` because they bind real sockets and move real bytes.
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
+import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import AsyncIterator, Iterator
 
 import pytest
+from mitmproxy.tools.web import webaddons
 
 from https_proxy_mcp.capture import ExchangeStore
 from https_proxy_mcp.capture.runtime import ProxyRuntime
@@ -37,6 +41,15 @@ def fetch(proxy_port: int, url: str) -> bytes:
     """A blocking proxied GET, to be handed to a thread."""
     handler = urllib.request.ProxyHandler({"http": f"http://127.0.0.1:{proxy_port}"})
     return urllib.request.build_opener(handler).open(url, timeout=10).read()
+
+
+def get(url: str) -> tuple[int, bytes]:
+    """A blocking plain GET that reports its status instead of raising, to be handed to a thread."""
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()
 
 
 async def fetch_through(runtime: ProxyRuntime, url: str) -> bytes:
@@ -178,3 +191,153 @@ async def test_is_running_tracks_the_lifecycle(store, tmp_path):
 
     await runtime.stop()
     assert runtime.is_running is False
+
+
+# --- the Human View ------------------------------------------------------------
+
+
+def split_web_url(web_url: str) -> tuple[str, str]:
+    """The view's base URL and its auth token, for building probes against."""
+    parsed = urllib.parse.urlparse(web_url)
+    return f"{parsed.scheme}://{parsed.netloc}", urllib.parse.parse_qs(parsed.query)["token"][0]
+
+
+@pytest.fixture
+async def web_running(store, tmp_path) -> AsyncIterator[ProxyRuntime]:
+    """A started runtime serving the Human View on an ephemeral port, always stopped afterwards."""
+    runtime = ProxyRuntime(store, port=0, confdir=tmp_path / "mitmproxy", web_ui=True)
+    await runtime.start()
+    try:
+        yield runtime
+    finally:
+        await runtime.stop()
+
+
+async def test_the_view_reports_a_token_gated_loopback_url(web_running):
+    web_url = web_running.web_url
+    assert web_url is not None
+
+    parsed = urllib.parse.urlparse(web_url)
+    assert parsed.hostname == "127.0.0.1"
+    assert parsed.port not in (None, 0)
+    assert "token=" in parsed.query
+
+
+async def test_a_requested_web_port_is_honoured(store, tmp_path, free_port):
+    runtime = ProxyRuntime(
+        store, port=0, confdir=tmp_path / "mitmproxy", web_ui=True, web_port=free_port
+    )
+    await runtime.start()
+    try:
+        web_url = runtime.web_url
+        assert web_url is not None
+        assert urllib.parse.urlparse(web_url).port == free_port
+    finally:
+        await runtime.stop()
+
+
+async def test_the_view_serves_the_ui_to_the_token_holder(web_running):
+    assert web_running.web_url is not None
+
+    status, body = await asyncio.to_thread(get, web_running.web_url)
+
+    assert status == 200
+    assert b'<div id="mitmproxy">' in body
+
+
+async def test_the_view_refuses_a_request_without_the_token(web_running):
+    assert web_running.web_url is not None
+    base, _ = split_web_url(web_running.web_url)
+
+    status, _ = await asyncio.to_thread(get, base)
+
+    assert status == 403
+
+
+async def test_a_request_through_the_proxy_appears_in_the_view(web_running, store, fixture_server):
+    """The view and the ExchangeStore are two readings of the one core."""
+    await fetch_through(web_running, f"http://127.0.0.1:{fixture_server}/me")
+    await until_recorded(store, 1)
+
+    assert web_running.web_url is not None
+    base, token = split_web_url(web_running.web_url)
+    status, body = await asyncio.to_thread(get, f"{base}/flows.json?token={token}")
+
+    assert status == 200
+    entries = json.loads(body)
+    assert any(
+        entry["request"]["host"] == "127.0.0.1" and entry["request"]["path"] == "/me"
+        for entry in entries
+    )
+
+
+async def test_stopping_releases_the_web_port(store, tmp_path):
+    """The library never stops its own web server, so the runtime keeps the reference and does."""
+    runtime = ProxyRuntime(store, port=0, confdir=tmp_path / "mitmproxy", web_ui=True)
+    await runtime.start()
+    web_url = runtime.web_url
+    assert web_url is not None
+    web_port = urllib.parse.urlparse(web_url).port
+    assert web_port is not None
+    assert accepts(web_port)
+
+    await runtime.stop()
+
+    assert not accepts(web_port)
+    assert runtime.web_url is None
+
+
+async def test_the_browser_is_never_opened(store, tmp_path, monkeypatch):
+    """A headless agent server must not pop a browser on the developer's screen."""
+
+    def explode(url: str) -> bool:
+        raise AssertionError(f"the Human View tried to open a browser at {url}")
+
+    monkeypatch.setattr(webaddons, "open_browser", explode)
+
+    runtime = ProxyRuntime(store, port=0, confdir=tmp_path / "mitmproxy", web_ui=True)
+    await runtime.start()
+    try:
+        assert runtime.web_url is not None
+    finally:
+        await runtime.stop()
+
+
+async def test_without_the_flag_no_view_is_served(running):
+    """Every existing caller gets today's proxy: no view, no URL, nothing extra bound."""
+    assert running.web_url is None
+    assert accepts(running.port)
+
+
+async def test_an_occupied_web_port_fails_start_and_cleans_up(store, tmp_path, free_port):
+    """Losing the port must fail start with the existing half-started cleanup."""
+    with socket.socket() as blocker:
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen()
+        occupied = blocker.getsockname()[1]
+
+        runtime = ProxyRuntime(
+            store,
+            port=free_port,
+            confdir=tmp_path / "mitmproxy",
+            web_ui=True,
+            web_port=occupied,
+        )
+        with pytest.raises(OSError):
+            await runtime.start()
+
+        assert runtime.is_running is False
+        assert not accepts(free_port)
+        assert runtime.web_url is None
+
+
+async def test_stopping_twice_is_harmless_with_the_view_on(store, tmp_path):
+    runtime = ProxyRuntime(store, port=0, confdir=tmp_path / "mitmproxy", web_ui=True)
+    await runtime.start()
+
+    await runtime.stop()
+    await runtime.stop()
+
+
+async def test_a_web_runtime_that_never_started_can_be_stopped(store, tmp_path):
+    await ProxyRuntime(store, port=0, confdir=tmp_path / "mitmproxy", web_ui=True).stop()

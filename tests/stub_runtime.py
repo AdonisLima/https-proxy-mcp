@@ -25,6 +25,8 @@ class StubRuntime:
         confdir: Any,
         host: str = "127.0.0.1",
         intercept_hosts: tuple[str, ...] | None = None,
+        web_ui: bool = False,
+        web_port: int = 0,
     ) -> None:
         self._store = store
         self._port = port or 51234
@@ -34,10 +36,21 @@ class StubRuntime:
         #: dropped: it is the only place a Session's Passthrough decision is visible, since nothing
         #: here binds a port to observe it through.
         self.intercept_hosts = intercept_hosts
+        # Kept for the same reason as ``intercept_hosts``: what the Session asked for is only
+        # visible in what it hands the runtime.
+        self.web_ui = web_ui
+        self.web_port = web_port
 
     @property
     def port(self) -> int:
         return self._port
+
+    @property
+    def web_url(self) -> str | None:
+        """A stand-in URL when the view was asked for, ``None`` otherwise — never raises."""
+        if not self.web_ui:
+            return None
+        return f"http://{self.host}:{self.web_port or 51235}/?token=stub-token"
 
     async def start(self) -> None:
         self.is_running = True

@@ -1,6 +1,6 @@
 [project]
 name = "https-proxy-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server that captures HTTPS traffic from an app under test and interleaves it with end-to-end test steps"
 readme = "README.md"
 authors = [
