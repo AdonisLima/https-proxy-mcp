@@ -107,6 +107,29 @@ def test_per_test_timeout_fails_a_hang_before_the_job_timeout():
     assert 0 < timeout <= 120
 
 
+def test_ruff_guards_the_single_event_loop_with_the_async_family():
+    """ADR-0001 runs the proxy on the server's single event loop, so a blocking call inside an
+    async function stalls capture for every Exchange — the specific bug class ruff's ASYNC
+    family detects. ``src/`` measured clean when the family was adopted, so it is a pure guard:
+    dropped from the selection, nothing fails until the stall it exists to catch has landed.
+    """
+    select = gate_configuration()["ruff"]["lint"]["select"]
+
+    assert "ASYNC" in select
+
+
+def test_async_blocking_in_tests_is_declared_not_silenced():
+    """Tests block deliberately — a hanging sink, a subprocess the Run window must outlive — so
+    the ASYNC family is narrowed for ``tests/`` by naming the measured rules, not by a blanket
+    ``ASYNC`` ignore that would hide a new blocking shape, and not by exempting ``src/``, where
+    a hit is a real stall to fix on its merits."""
+    ignores = gate_configuration()["ruff"]["lint"]["per-file-ignores"]
+
+    test_ignores = ignores["tests/**"]
+    assert "ASYNC" not in test_ignores
+    assert {"ASYNC110", "ASYNC220", "ASYNC221", "ASYNC240", "ASYNC251"} <= set(test_ignores)
+
+
 class _ItemStub:
     """Just enough of ``pytest.Item`` for the collection hook: a marker lookup and a mark sink.
 

@@ -136,4 +136,16 @@ src = ["src", "tests"]
 extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF"]
+# ASYNC guards ADR-0001's single event loop: the proxy runs on the server's loop, so a blocking
+# call inside an async function stalls capture for every Exchange. Measured clean across src/
+# (2026-09-16, post-Human-View), so the family lands as a pure guard — any future hit is a real
+# stall, not a migration.
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "RUF", "ASYNC"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests block on purpose: they simulate the world the proxy captures — a hanging sink, a
+# subprocess the Run window must outlive, a `time.sleep` standing in for a slow device. The
+# measured seven (tests/test_passthrough.py, test_pending_e2e.py, test_run_process.py,
+# test_runtime.py, test_simulator_e2e.py, test_tools_trust.py) are declared here rather than
+# rewritten into asyncio shapes that would stop resembling the world.
+"tests/**" = ["ASYNC110", "ASYNC220", "ASYNC221", "ASYNC240", "ASYNC251"]
