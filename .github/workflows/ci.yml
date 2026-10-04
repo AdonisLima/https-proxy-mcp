@@ -55,12 +55,18 @@ jobs:
       # tests stay skipped: they are gated on HTTPS_PROXY_MCP_E2E, which is deliberately not set
       # here and must never be — they redirect the runner's system proxy.
       #
+      # pytest-randomly rides in the dev group and activates on its own, so every run shuffles
+      # test order and prints `Using --randomly-seed=N` at the start — replay a failure with
+      # `--randomly-seed=N`. No `-q` here precisely so that line reaches the log: quiet mode
+      # suppresses the header that carries it. The shuffle never reaches the machine tests in
+      # any way that matters — their skipif fires before ordering is a question.
+      #
       # Coverage is enforced here and nowhere else: the floor lives in pyproject.toml's
       # [tool.coverage] and the flags ride on this step. Pre-commit gains nothing — the recorded
       # "no tests in the hook" decision applies a fortiori to an instrumented run, which is
       # slower still and would invite the bypass that decision exists to prevent.
       - name: Tests
-        run: uv run pytest -q --cov=https_proxy_mcp --cov-report=term-missing
+        run: uv run pytest --cov=https_proxy_mcp --cov-report=term-missing
 
       - name: Lint
         run: uv run ruff check .

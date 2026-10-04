@@ -18,9 +18,13 @@ MANIFEST = Path(__file__).resolve().parent.parent / "pyproject.toml"
 WORKFLOW = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
 
 
-def gate_configuration() -> dict:
+def manifest() -> dict:
     with MANIFEST.open("rb") as handle:
-        return tomllib.load(handle)["tool"]
+        return tomllib.load(handle)
+
+
+def gate_configuration() -> dict:
+    return manifest()["tool"]
 
 
 def workflow_jobs() -> dict:
@@ -29,6 +33,18 @@ def workflow_jobs() -> dict:
     the promise (a step renamed, a key reordered) does not fail the assertion."""
     with WORKFLOW.open() as handle:
         return yaml.safe_load(handle)["jobs"]
+
+
+def ci_test_step() -> dict:
+    """The single step, anywhere in the workflow, that runs the test suite."""
+    steps = [
+        step
+        for job in workflow_jobs().values()
+        for step in job["steps"]
+        if "run" in step and "uv run pytest" in step["run"]
+    ]
+    assert len(steps) == 1
+    return steps[0]
 
 
 def audit_step() -> dict:
@@ -125,17 +141,32 @@ def test_the_ci_test_step_carries_the_coverage_flags():
     suite, not the fast majority — is the one place an instrumented run belongs, since the
     recorded "no tests in pre-commit" decision applies a fortiori to a slower instrumented run.
     Asserted by shape here and exercised by CI on push."""
-    steps = [
-        step
-        for job in workflow_jobs().values()
-        for step in job["steps"]
-        if "run" in step and "uv run pytest" in step["run"]
-    ]
-    assert len(steps) == 1
-    run = steps[0]["run"]
+    run = ci_test_step()["run"]
 
     assert "--cov=https_proxy_mcp" in run
     assert "--cov-report=" in run
+
+
+def test_randomized_order_is_a_dev_dependency_not_a_flag():
+    """pytest-randomly activates on install — there is no enabling flag — so the dependency
+    being in the dev group *is* the adoption, for local runs and CI alike. Asserting the group
+    rather than a command line keeps the promise where the plugin's own mechanism keeps it."""
+    dev = manifest()["dependency-groups"]["dev"]
+
+    assert any(requirement.startswith("pytest-randomly") for requirement in dev)
+
+
+def test_the_ci_test_step_runs_randomized_and_reproducible():
+    """Adopted only after a clean trial, and only worth anything if a CI failure caused by
+    ordering can be replayed: the plugin prints ``--randomly-seed=N`` at run start, and
+    pytest's ``-q`` suppresses the header that carries it — measured, not assumed. So the step
+    must not pass ``-q``, must not disable the plugin, and must not pin a seed, which would
+    turn the shuffle back into a fixed order."""
+    run = ci_test_step()["run"]
+
+    assert "-q" not in run.split()
+    assert "no:randomly" not in run
+    assert "--randomly-seed" not in run
 
 
 def test_ruff_guards_the_single_event_loop_with_the_async_family():

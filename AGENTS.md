@@ -19,7 +19,7 @@ be separated by any narrowing that works on hosts.
 ## Verify
 
 ```bash
-uv run pytest -q          # 1014 passed, 3 skipped, ~55s
+uv run pytest -q          # 1026 passed, 3 skipped, ~55s; order is shuffled (pytest-randomly)
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy               # strict, src/ only
