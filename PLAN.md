@@ -98,7 +98,11 @@ All of the above, plus the deferrals and open questions recorded elsewhere, are 
 
 ## Open questions
 
-1. **Can `--mode local:<spec>` scope to the app process inside CoreSimulator?** Only relevant to the deferred opt-in path now, not to v1.
-2. **How should WebSocket and long-lived streaming connections appear in an interval model?** They span many Steps by nature, so the overlap model degrades into "overlaps everything".
-3. **Do Detox, Appium, Playwright and XCUITest expose per-Step timings** rich enough for the `Step` contract, or do they need explicit marks?
-4. **Whether `simctl keychain` requires a booted simulator** or accepts a shut-down one by UDID — decides whether trust can be arranged before boot.
+The four this plan opened with, kept as the record of what was unknown *before* the work — two of
+them were answered by doing it. The maintained list, renumbered and extended to seven, is in
+[HANDOFF.md](./HANDOFF.md); source code cites it by number, so that is the one to update.
+
+1. **Can `--mode local:<spec>` scope to the app process inside CoreSimulator?** Only relevant to the deferred opt-in path now, not to v1. **Still open.**
+2. ~~**How should WebSocket and long-lived streaming connections appear in an interval model?** They span many Steps by nature, so the overlap model degrades into "overlaps everything".~~ **Answered by P4:** classed long-lived on `101` or `text/event-stream`, owned once by the Step that opened them, never repeated as an Overlap.
+3. **Do Detox, Appium, Playwright and XCUITest expose per-Step timings** rich enough for the `Step` contract, or do they need explicit marks? **Still open, and no longer blocking** — `start_step`/`end_step` covers any of them without an adapter.
+4. ~~**Whether `simctl keychain` requires a booted simulator** or accepts a shut-down one by UDID — decides whether trust can be arranged before boot.~~ **Answered: it requires a booted device.** A shut-down one fails `code=405, Unable to lookup in current state: Shutdown`.

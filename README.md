@@ -9,7 +9,8 @@ A failing assertion tells you the UI was wrong. It doesn't tell you that `GET /m
 > and the Interception Authority installed into the device for you; page through traffic, drill
 > into one Exchange, slice a body, search with mitmproxy filter expressions, or block until the
 > request you are waiting for arrives. Then run your end-to-end test through `run_test` and ask
-> `get_timeline` why it failed. Builds to a wheel, ships [SKILL.md](./SKILL.md), and is not
+> `get_timeline` why it failed. Builds to a wheel, ships
+> [SKILL.md](./.claude/skills/https-proxy-mcp/SKILL.md), and is not
 > published to PyPI. See [PLAN.md](./PLAN.md).
 
 ## Trying it
@@ -105,7 +106,7 @@ different answer from "finished". See [ADR-0004](./docs/adr/0004-overlap-attribu
 |---|---|
 | [docs/INSTALL.md](./docs/INSTALL.md) | Installation: requirements, MCP client config, simulator setup, troubleshooting |
 | [docs/USAGE.md](./docs/USAGE.md) | Usage: worked examples with real output, and the full twenty-tool reference |
-| [SKILL.md](./SKILL.md) | The agent-facing prompt: which three tools matter, and how to read a Timeline |
+| [.claude/skills/https-proxy-mcp/SKILL.md](./.claude/skills/https-proxy-mcp/SKILL.md) | The agent-facing prompt: which three tools matter, and how to read a Timeline |
 | [SPEC.md](./SPEC.md) | The v1 specification — architecture, tool surface, semantics, defaults |
 | [CONTEXT.md](./CONTEXT.md) | Domain vocabulary, used precisely throughout the code |
 | [PLAN.md](./PLAN.md) | Six-phase build plan with acceptance criteria |

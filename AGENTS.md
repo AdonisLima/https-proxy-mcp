@@ -24,8 +24,9 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
 
 ## Read these first, in this order
 
-0. **[SKILL.md](./SKILL.md)** — the agent-facing prompt, and the shortest description of what
-   this tool is *for*. Three tools are the path; seventeen are drill-down.
+0. **[.claude/skills/https-proxy-mcp/SKILL.md](./.claude/skills/https-proxy-mcp/SKILL.md)** — the
+   agent-facing prompt, and the shortest description of what this tool is *for*. Three tools are
+   the path; seventeen are drill-down.
 1. **[CONTEXT.md](./CONTEXT.md)** — the domain language. Use these words exactly.
 2. **[docs/USAGE.md](./docs/USAGE.md)** and **[docs/INSTALL.md](./docs/INSTALL.md)** — the human
    guides. USAGE.md is the **accurate** tool reference: its signatures are checked against the
@@ -34,7 +35,11 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
 4. **[PLAN.md](./PLAN.md)** — six phases with acceptance criteria, all six met.
 5. **[docs/adr/](./docs/adr/)** — six decisions and why. Two deviate from the research that
    preceded the project, so read them before "fixing" anything that looks wrong.
-6. **[HANDOFF.md](./HANDOFF.md)** — current state, what is deliberately not built, open
+6. **[docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md](./docs/superpowers/specs/2026-08-05-p4-runs-and-timelines-design.md)**
+   — P4's design: the four probe findings that shaped it, and the Correlator's rules stated
+   precisely. The summaries elsewhere carry the findings; this carries the reasoning, which is
+   what you check a summary against when overlap attribution looks wrong.
+7. **[HANDOFF.md](./HANDOFF.md)** — current state, what is deliberately not built, open
    questions, and the decisions that belong to the user.
 
 ## Non-negotiables
@@ -47,7 +52,8 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
   the v1 specification and a historical record of intent. `docs/USAGE.md` is the API reference.
 - **`SKILL.md` is deliberately self-contained** — no relative links into this repo — so it works
   copied to `~/.claude/skills/https-proxy-mcp/SKILL.md` on any machine. Do not add links to it.
-  The copy under `.claude/skills/https-proxy-mcp/` is a symlink to it, not a second copy.
+  It lives at `.claude/skills/https-proxy-mcp/SKILL.md`, where skills go, and there is exactly
+  one copy: the install step is a straight `cp` from that path to the same path under `~`.
 - **The machine tests are gated on `HTTPS_PROXY_MCP_E2E=1`, not on the `machine` marker.** A
   `-m` on the command line replaces any default expression from `addopts`, so a marker gate
   would let `pytest -m "not integration"` silently opt back in to redirecting the machine's
@@ -154,7 +160,7 @@ Added by P5:
 | Both dependencies carry **upper bounds** | Caps read as timidity. These are measured: mcp 2.0.0 removed `mcp.server.fastmcp` outright and declares `Requires-Python: >=3.10`, so it was an eligible candidate on every interpreter here — and a wheel ships **no lock file**, so a consumer resolves from `Requires-Dist` alone. Lifting either means porting, not relaxing. |
 | The version is read from **installed metadata**, never written in the source | A literal would be simpler and is exactly the problem: two places holding one fact, drifting the moment one is bumped alone. A tree with no metadata reports `0+unknown` rather than a plausible number, so a client can tell it is not talking to a release. |
 | `server._mcp_server.version` is assigned after construction | Reaching into a private attribute looks fragile. `FastMCP.__init__` genuinely takes no `version`, and the low-level server it wraps reads its own mutable `version` when it builds the handshake. The stdio handshake test asserts through the transport, so an SDK rename fails a test rather than silently reverting to the SDK's version. |
-| `SKILL.md` lives at the **repo root only**, not inside the wheel | SPEC.md says "ships a SKILL.md", so bundling looks more faithful. Skill files belong in skill directories rather than site-packages, and keeping it out is what lets the wheel-contents test assert "nothing outside the package". |
+| `SKILL.md` lives under **`.claude/skills/`**, not at the repo root and not inside the wheel | SPEC.md says "ships a SKILL.md", so bundling looks more faithful. Skill files belong in skill directories rather than site-packages, and keeping it out of the package is what lets the wheel-contents test assert "nothing outside the package". It sat at the root through v1 and moved once `.claude/skills/` existed — one file, in the place its own install instructions point at. |
 | The wheel's contents are asserted as an **allowlist of two prefixes** | A denylist reads as more targeted. It would have to name `tests/fixtures/maestro-commands-failing-assert.json` — 123 KB of one device's UI tree — and would not name whatever the next one is. |
 | The clean-install test is parametrised over **interpreters**, not just run once | Looks like thoroughness for its own sake. It is the only thing in the suite that exercises *resolution*, and one interpreter cannot notice a dependency range that two interpreters disagree about. It is what caught the mcp 2.0.0 break. |
 | `requires-python` is pinned to the interpreters under test | Testing configuration looks like ceremony. It closes the loop: lowering the floor without adding the interpreter would ship a promise nobody had tried. |
@@ -166,3 +172,20 @@ Added by the harness work:
 |---|---|
 | `mypy` checks `src/` only | Leaving the larger half unchecked looks half-done. Under `--strict` the suite reports ~870 findings, almost all a missing `-> None`; a mechanical edit across 41 files would bury anything real in the same diff. A separate, deliberate commit if it is ever wanted. |
 | mitmproxy's unannotated calls are relaxed **per module**, not per call site | Two named modules in `pyproject.toml` rather than eight inline ignores. The boundary with someone else's library is a real thing and is better named once than rediscovered at each call site — the same reasoning CONTEXT.md uses to allow "flow" in exactly two files. |
+
+## Agent skills
+
+### Issue tracker
+
+Local markdown under `.scratch/<feature-slug>/` — which is gitignored, so issues stay on this
+machine and never reach the GitHub remote. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical roles, each label string equal to its name, carried on a `Status:` line in the
+issue file. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the root, plus the per-module `CLAUDE.md` traps. See
+`docs/agents/domain.md`.

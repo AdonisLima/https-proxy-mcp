@@ -27,6 +27,16 @@ object at the boundary.
 - **`with_termlog=False` does not make mitmproxy silent.** Its records go through Python's
   `logging`, and the MCP SDK installs a handler, so proxy chatter still appears. Verified
   harmless: stdout carries **only** valid JSON-RPC and every line of chatter is on stderr.
+- **Never write a mitmproxy `allow_hosts` pattern by hand.** `hostsets.py` renders them from the
+  same definition the Scope predicate answers from, and a table of hosts asserts the two agree.
+  Two expressions of one host-set rule is the trap `../targets/CLAUDE.md` records — a reader that
+  normalises hides a writer that does not — and here it would surface as a Scope that reports a
+  host's traffic while never decrypting it. The pattern's optional trailing dot is not
+  decoration: a candidate string can reach the engine with its root dot still attached. It admits
+  **one** such dot where the predicate's `rstrip(".")` strips a whole run, so the two forms do
+  diverge at `kivid.com.br..` — a string nothing emits. The equivalence is asserted over the hosts
+  that occur, not over every string, and the table in `tests/test_hostsets.py` is where that
+  promise actually lives.
 - **Keep the proxy off stdout anyway.** A stray flushed `print` does *not* corrupt MCP framing —
   tested deliberately; the client parses stdout line by line and skips what it cannot parse. But
   an interleaved write *inside* a JSON-RPC line would corrupt it. No test enforces this.

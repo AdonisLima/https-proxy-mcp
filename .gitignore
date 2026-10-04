@@ -11,6 +11,7 @@ wheels/
 
 # Machine-specific scratch: recorded proxy state, local recovery notes.
 .local/
+.scratch/
 
 # Credentials. This project needs none and reads none — the entry is defensive, so that an
 # agent working here cannot stage one by accident. Session directories hold unredacted bodies

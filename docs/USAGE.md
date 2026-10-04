@@ -42,6 +42,7 @@ Timeline.
   "host": "127.0.0.1",
   "target": "curl",
   "scope": null,
+  "passthrough": false,
   "session_dir": "…/sessions/20260805T232937-174020",
   "trust": { "trusted": true, "detail": "nothing to trust: curl is pointed at the proxy with -x, …" }
 }
@@ -423,7 +424,7 @@ Twenty tools. Signatures are the real ones; defaults are shown where they exist.
 
 | Tool | Notes |
 |---|---|
-| `start_capture(target, port, scope, udid)` | `target="curl"`, `port=8080`. `port=0` binds an ephemeral one and reports it. Required before any other traffic tool |
+| `start_capture(target, port, scope, udid, passthrough)` | `target="curl"`, `port=8080`, `passthrough=True`. `port=0` binds an ephemeral one and reports it. With a `scope`, `passthrough` decrypts only those hosts and forwards every other connection untouched. Required before any other traffic tool |
 | `stop_capture()` | Releases the port and undoes any routing. Always call it |
 | `get_status()` | Recording state, counts, Scope, proxy state, trust, `open_step` |
 | `diagnose_capture()` | The five verdicts above, plus the counts they came from |

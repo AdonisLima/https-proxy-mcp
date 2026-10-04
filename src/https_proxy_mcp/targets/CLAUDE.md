@@ -48,7 +48,10 @@ running against the real thing, and several of these passed every test while bei
   session — the mechanism is in `../server/CLAUDE.md`. A test asserts every `sudo` call carries
   `-n`.
 
-## Never covered by a test
+## Barely covered by a test
 
-`_make_signal_handler` and the signal disposition it restores are not exercised anywhere. Treat
-edits there as unverified, and prefer keeping a redundant guard over removing one.
+`_make_signal_handler` has exactly one test, and it reaches only the branch that chains to a
+**callable** previous disposition — `test_the_signal_handler_leaves_a_live_foreign_record_alone`.
+The branch after it, which restores the default disposition and re-raises, is still exercised
+nowhere and cannot easily be: re-raising takes the test runner down with it. Treat edits to that
+half as unverified, and prefer keeping a redundant guard over removing one.

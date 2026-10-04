@@ -65,13 +65,22 @@ class IosSimulatorTarget:
     # --- lifecycle ------------------------------------------------------------
 
     def prepare(self) -> None:
-        """Repair a sentinel left behind by a process that never cleaned up.
+        """Refuse if another live process holds the machine's proxy; otherwise repair.
 
-        Layer 3 of the teardown guarantee, reached through the target. It has to happen here
-        rather than only at server start, because :meth:`route_traffic` deliberately refuses to
-        run while a stale sentinel exists — the alternative is recording an already-proxied
-        machine as the state to return to and losing the real configuration for good.
+        The refusal comes first, and it is here rather than at :meth:`route_traffic` because this
+        is the last point at which a Session can be declined without having created anything. By
+        the time routing is arranged a Session directory exists, retention has already pruned the
+        *other* window's oldest Sessions, and a port is bound. ``route_traffic`` still refuses on a
+        record's mere existence, but that refusal is a backstop written for a stale file: it names
+        no process, and it advises calling ``repair`` — which for a live holder does nothing.
+
+        With no live holder this is layer 3 of the teardown guarantee, reached through the target.
+        It has to happen here as well as at server start, because :meth:`route_traffic` deliberately
+        refuses to run while a stale sentinel exists — the alternative is recording an
+        already-proxied machine as the state to return to and losing the real configuration for
+        good.
         """
+        self._proxy.refuse_if_held()
         self._proxy.repair()
 
     def authority_pem(self) -> Path:

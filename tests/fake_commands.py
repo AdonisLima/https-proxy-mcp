@@ -36,6 +36,13 @@ Authenticated Proxy Enabled: 0
 
 NO_BYPASS_DOMAINS = "There aren't any bypass domains set on Wi-Fi.\n"
 
+#: What `ps -o lstart= -p <pid>` prints, padding and all. Opaque on purpose: the sentinel's owner
+#: compares it for equality and never parses it, which is what closes process-id reuse. Answering
+#: it here makes a sentinel written through this fake resolve as *ours*; a test that wants a dead
+#: or unknown owner overrides the entry with an empty string, or makes the read fail the way a
+#: real `ps` does for a process that is gone.
+PROCESS_START = "Mon Aug 17 14:29:53 2026  \n"
+
 
 class FakeCommands:
     """Records every command issued and answers reads from a canned table.
@@ -61,6 +68,7 @@ class FakeCommands:
             ("/usr/sbin/networksetup", "-getwebproxy"): WEB_PROXY_OFF,
             ("/usr/sbin/networksetup", "-getsecurewebproxy"): WEB_PROXY_OFF,
             ("/usr/sbin/networksetup", "-getproxybypassdomains"): NO_BYPASS_DOMAINS,
+            ("/bin/ps",): PROCESS_START,
             **(responses or {}),
         }
         #: scutil is asked two different questions down one pipe, so it answers by turn.

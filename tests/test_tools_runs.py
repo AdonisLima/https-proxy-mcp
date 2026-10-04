@@ -315,6 +315,24 @@ async def test_a_host_filter_narrows_further_without_widening_the_scope(server, 
         await call(server, "stop_capture")
 
 
+async def test_a_host_filter_covers_subdomains_like_any_other_host_entry(recording, state):
+    """A host filter is a host entry, so it has to mean what one means everywhere else: itself and
+    everything under it.
+
+    This is the second caller of the shared host-set rule — the Scope is the first — and the one
+    whose behaviour would go unnoticed if that rule were quietly replaced here by an equality test.
+    """
+    now = time.time()
+    record(state, t_start=now, t_end=now + 0.1, host="api.example.com")
+    record(state, t_start=now, t_end=now + 0.1, host="cdn.example.org")
+    await mark(recording, "a step")
+
+    timeline = await call(recording, "get_timeline", host_filter="example.com")
+
+    assert timeline["counts"]["exchanges"] == 1
+    assert "cdn.example.org" not in json.dumps(timeline)
+
+
 async def test_background_is_counted_by_default_and_listed_on_request(recording, state):
     now = time.time()
     record(state, t_start=now, t_end=now + 0.1, path="/telemetry")

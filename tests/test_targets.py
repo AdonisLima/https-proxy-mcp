@@ -12,10 +12,13 @@ a third target inherits it for free. Nothing in it touches the machine — both 
 through :class:`FakeCommands` — so it runs in the ordinary suite.
 """
 
+import re
+from pathlib import Path
 from typing import get_args
 
 import pytest
 
+import https_proxy_mcp.targets
 from fake_commands import FakeCommands
 from https_proxy_mcp.targets import CaptureTarget, CurlTarget, build_target, known_targets
 from https_proxy_mcp.targets.base import CaptureObservations, DiagnosisStatus, TrustStatus
@@ -224,3 +227,30 @@ def test_teardown_stays_repeatable_after_a_real_route(contract):
     target.route_traffic(8080)
     target.teardown()
     target.teardown()
+
+
+# --- what the layer may depend on ---------------------------------------------
+
+
+def test_no_capture_target_imports_the_tool_framework():
+    """The contract that keeps a target a target.
+
+    ``prepare()`` now refuses when another live process holds the machine's proxy, and the obvious
+    way to write that refusal is to raise the error the tool layer already understands. A target
+    raises a plain error instead and the core translates it, because the protocol in
+    :mod:`~https_proxy_mcp.targets.base` is the whole reason Android in v1.1 is an addition rather
+    than a refactor — and it would stop being that the moment implementing it meant depending on
+    the MCP SDK.
+
+    Asserted over the source text rather than over module attributes, because an ``import mcp``
+    inside a function body would satisfy the latter and still be the dependency this forbids.
+    """
+    layer = Path(https_proxy_mcp.targets.__file__).parent
+
+    offenders = [
+        path.name
+        for path in sorted(layer.glob("*.py"))
+        if re.search(r"^\s*(?:from|import)\s+mcp\b", path.read_text(), re.MULTILINE)
+    ]
+
+    assert offenders == []

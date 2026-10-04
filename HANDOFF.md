@@ -115,13 +115,14 @@ The same probe found that one failing command carries **33 KB of `error.hierarch
 
 ## Deliberately not built yet
 
-- **`json_path` on `get_exchange_body`.** In SPEC.md's table. Doing it properly means a JSONPath dependency or a hand-rolled subset. Decide which when something wants it.
-- **WebSocket *message* capture.** The upgrade Exchange is recorded and classed long-lived; the individual frames are not. Open question 2 asked how streams should *appear* in an interval model, which the long-lived rule answers; capturing their contents is a separate v1.1 question.
-- **Reading Runs back from disk.** `RunRegistry` writes `run.json` for durability but keeps its index in memory, so a Session directory found later is readable by hand and not by `list_runs`. Nothing needs it yet.
-- **Publication.** Built and locally verified, not uploaded. The user's explicit choice — see "Next" above.
-- **Android Emulator, write tools, `--mode local`.** v1.1, per PLAN.md.
-- **`simplify` on `server/run_tools.py` and `serialize/timeline_views.py`.** Named as an optional quality pass for P5 and not taken; nothing about them is known to be wrong.
-- **A reverse check on `SKILL.md`.** A test asserts every registered tool is *named* in the skill. The other direction — that the skill names no tool which does not exist — is not asserted, because telling a tool name from a parameter name in prose needs a curated exclusion list costing more upkeep than the bug it catches.
+**[docs/v1.1-candidates.md](./docs/v1.1-candidates.md).** Every item that used to be listed here
+is there, sized and ranked, with a recommended scope — `json_path` (§9), WebSocket message
+capture (§6), reading Runs back from disk (§8), Android, write tools and `--mode local`
+(§1–§3), and the `simplify` pass, publication and the `SKILL.md` reverse check under §10
+Housekeeping.
+
+The list was duplicated in both files, which is how one of them goes stale. That document is
+the maintained one; this section is a pointer and nothing else.
 
 ## Open questions
 

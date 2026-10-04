@@ -23,6 +23,7 @@ def register_session_tools(server: FastMCP, state: CaptureState) -> None:
         port: int = 8080,
         scope: list[str] | None = None,
         udid: str | None = None,
+        passthrough: bool = True,
     ) -> dict[str, Any]:
         """Begin capturing HTTPS traffic into a new Session.
 
@@ -37,14 +38,24 @@ def register_session_tools(server: FastMCP, state: CaptureState) -> None:
         must already be booted. ``udid`` names which one — required when more than one is
         running, since guessing would capture the wrong app and report success.
 
-        ``scope`` narrows what later calls *report*, never what is captured. Everything
-        through the proxy is recorded regardless.
+        ``scope`` names the hosts you care about. It narrows what later calls *report*, and — with
+        ``passthrough`` left on — it is also the set of hosts that gets decrypted: every other
+        connection on the machine is forwarded without being opened and arrives with the real
+        certificate, so the developer's browser and any other simulator carry on untouched. Name
+        no ``scope`` and everything through the proxy is intercepted and recorded, which is what
+        exploratory capture wants.
+
+        ``passthrough=False`` intercepts everything despite a ``scope`` — reach for it when a
+        ``scope`` turns out to be too narrow, since a host outside it was never decrypted and so
+        cannot be waited for or fetched. The result says which way it went.
 
         If nothing appears afterwards, call ``diagnose_capture`` rather than guessing: it tells
         an untrusted authority apart from certificate pinning apart from an app that simply has
         not made a request yet.
         """
-        return await state.start(target=target, port=port, scope=scope, udid=udid)
+        return await state.start(
+            target=target, port=port, scope=scope, udid=udid, passthrough=passthrough
+        )
 
     # Written after the fact so the available targets stay true as P3 adds the simulator.
     start_capture.__doc__ = (start_capture.__doc__ or "").format(targets=", ".join(known_targets()))

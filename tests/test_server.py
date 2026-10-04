@@ -140,7 +140,9 @@ async def test_the_instructions_name_the_path_the_project_exists_for():
 # they describe and INSTRUCTIONS is a few lines, but a prompt in a separate file at the repo root
 # has nothing tying it to the surface it documents. These two tests are that tie.
 
-SKILL = Path(__file__).resolve().parent.parent / "SKILL.md"
+SKILL = (
+    Path(__file__).resolve().parent.parent / ".claude" / "skills" / "https-proxy-mcp" / "SKILL.md"
+)
 
 
 def test_the_skill_has_the_frontmatter_a_harness_loads_it_by():

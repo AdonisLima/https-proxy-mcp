@@ -59,12 +59,17 @@ class Session:
     started: float
     target: str
     port: int
-    #: Hosts the agent is interested in. Narrows what is *reported*, never what is
-    #: captured (CONTEXT.md). ``None`` means everything is reported.
+    #: Hosts the agent is interested in. Narrows what is *reported*, and narrows what is
+    #: intercepted only under Passthrough (CONTEXT.md). ``None`` means everything is reported.
     scope: tuple[str, ...] | None
     #: Which device the traffic came from, when the target names one. Recorded so a Session
     #: directory found later says which simulator produced it.
     udid: str | None = None
+    #: Whether Passthrough was in force: only the Scope's hosts were decrypted, and every other
+    #: connection was forwarded unopened (CONTEXT.md). Recorded beside the Scope because it is
+    #: what answers "why is there no traffic from that host?" for a directory found later — the
+    #: traffic was never decrypted, so no listing narrowing can explain its absence.
+    passthrough: bool = False
 
     @classmethod
     def create(
@@ -75,6 +80,7 @@ class Session:
         port: int,
         scope: list[str] | None = None,
         udid: str | None = None,
+        passthrough: bool = False,
         now: datetime | None = None,
     ) -> Session:
         """Create the Session directory and write its manifest.
@@ -101,6 +107,7 @@ class Session:
             port=port,
             scope=tuple(scope) if scope is not None else None,
             udid=udid,
+            passthrough=passthrough,
         )
         (session_dir / MANIFEST_FILENAME).write_text(json.dumps(session.to_manifest(), indent=2))
         return session
@@ -113,6 +120,7 @@ class Session:
             "target": self.target,
             "port": self.port,
             "scope": list(self.scope) if self.scope is not None else None,
+            "passthrough": self.passthrough,
             "udid": self.udid,
         }
 

@@ -11,22 +11,64 @@ safe to get right before pointing it at the real machine.
 """
 
 import json
+import os
+import signal
 import stat
 
 import pytest
 
-from fake_commands import WEB_PROXY_OFF, FakeCommands
+from fake_commands import PROCESS_START, WEB_PROXY_OFF, FakeCommands
 from https_proxy_mcp.targets.systemproxy import (
+    ProxyOwner,
     ProxySetting,
     SystemProxy,
     SystemProxyState,
+    repair_system_proxy,
     resolve_primary_service,
+)
+
+#: The prior state every hand-written sentinel below records. Configured but off, which is what
+#: the development machine really carried — restoring it needs the server *and* the flag.
+PRIOR = SystemProxyState(
+    service="Wi-Fi",
+    web=ProxySetting(enabled=False, server="127.0.0.1", port=9090),
+    secure=ProxySetting(enabled=False, server="127.0.0.1", port=9090),
+    bypass=(),
 )
 
 
 @pytest.fixture
 def sentinel(tmp_path):
     return tmp_path / "proxy-state.json"
+
+
+def write_sentinel(path, owner: dict[str, object] | None, *, prior: SystemProxyState = PRIOR):
+    """A sentinel as some other process would have left it, owner and all.
+
+    Written as a document rather than through :meth:`SystemProxy.redirect` because the owner is
+    the whole subject: these tests need a record naming a process that is *not* this one, which
+    a redirect from this process can never produce.
+    """
+    document: dict[str, object] = dict(prior.to_dict())
+    if owner is not None:
+        document["owner"] = owner
+    path.write_text(json.dumps(document))
+
+
+def unreadable_start_time(commands: FakeCommands):
+    """A runner where reading a process start time fails the way it really does.
+
+    ``ps -o lstart= -p <pid>`` exits 1 with no output for a process that is gone, which
+    :func:`run_command` turns into an ``OSError``. Everything else is answered as usual, so the
+    mutations a restore issues are still recorded.
+    """
+
+    def runner(argv, *, stdin=None):
+        if argv[0].endswith("ps"):
+            raise OSError("ps: no such process")
+        return commands(argv, stdin=stdin)
+
+    return runner
 
 
 # --- which service to redirect ------------------------------------------------
@@ -263,3 +305,226 @@ def test_a_failure_while_restoring_on_exit_is_swallowed(sentinel):
     proxy.restore_on_exit()
 
     assert sentinel.exists()
+
+
+# --- ownership ----------------------------------------------------------------
+#
+# Every editor window on the machine runs its own copy of this server, and they all resolve to the
+# same default root, so they all share one sentinel. Without an owner any process repairs, restores
+# and deletes any record it finds — which switches off another window's routing and leaves a Session
+# reporting that it is recording while receiving nothing.
+
+
+def test_the_sentinel_records_the_process_that_wrote_it(sentinel):
+    """The identity is the whole fix: a record that names nobody belongs to everybody."""
+    commands = FakeCommands()
+
+    SystemProxy(sentinel, runner=commands).redirect("127.0.0.1", 8080)
+
+    owner = json.loads(sentinel.read_text())["owner"]
+    assert owner["pid"] == os.getpid()
+    assert owner["started"] == PROCESS_START.strip()
+
+
+def test_the_start_time_is_read_through_the_command_runner(sentinel):
+    """The same seam as every other read here, which is what keeps these tests off the machine."""
+    commands = FakeCommands()
+
+    SystemProxy(sentinel, runner=commands).redirect("127.0.0.1", 8080)
+
+    assert ["/bin/ps", "-o", "lstart=", "-p", str(os.getpid())] in commands.issued
+
+
+def test_the_start_time_is_compared_for_equality_and_never_parsed(sentinel):
+    """It is an opaque string. Parsing it would add a way for the comparison to fail on a format
+    this code was never shown, and the only question ever asked of it is "the same one?".
+
+    Two halves, because the first alone does not earn the name: a lenient parser that mapped every
+    format it could not read onto one sentinel value would keep it green. The second half asserts
+    that two *different* unreadable strings do **not** compare equal, which is the thing such a
+    parser could not do.
+    """
+    commands = FakeCommands({("/bin/ps",): "not a date at all"})
+    write_sentinel(sentinel, {"pid": os.getpid(), "started": "not a date at all"})
+
+    assert SystemProxy(sentinel, runner=commands).ownership() == "ours"
+
+    disagreeing = FakeCommands({("/bin/ps",): "another thing entirely"})
+    assert SystemProxy(sentinel, runner=disagreeing).ownership() == "dead"
+
+
+def test_our_own_record_is_ours(sentinel):
+    commands = FakeCommands()
+    proxy = SystemProxy(sentinel, runner=commands)
+    proxy.redirect("127.0.0.1", 8080)
+
+    assert proxy.ownership() == "ours"
+    assert proxy.foreign_holder() is None
+
+
+def test_a_record_whose_owner_is_gone_is_dead(sentinel):
+    """`ps` exits non-zero for a process that no longer exists, which is the crash case."""
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": 4242, "started": PROCESS_START.strip()})
+
+    proxy = SystemProxy(sentinel, runner=unreadable_start_time(commands))
+
+    assert proxy.ownership() == "dead"
+
+
+def test_a_record_with_no_owner_at_all_is_absent_and_still_repaired(sentinel):
+    """There is no sentinel on disk anywhere, so there is no migration to write — but a record
+    written by an older build must not become one nobody is allowed to clean up."""
+    commands = FakeCommands()
+    write_sentinel(sentinel, None)
+
+    proxy = SystemProxy(sentinel, runner=commands)
+
+    assert proxy.ownership() == "absent"
+    assert proxy.repair() == PRIOR
+    assert not sentinel.exists()
+
+
+def test_a_live_foreign_process_holds_its_own_record(sentinel):
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": os.getpid() + 1, "started": PROCESS_START.strip()})
+
+    proxy = SystemProxy(sentinel, runner=commands)
+
+    assert proxy.ownership() == "live_foreign"
+    holder = proxy.foreign_holder()
+    assert holder == ProxyOwner(pid=os.getpid() + 1, started=PROCESS_START.strip())
+
+
+def test_the_same_process_id_with_a_different_start_time_is_dead(sentinel):
+    """Our own id, recorded by something that is not us — a reboot away from being real."""
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": os.getpid(), "started": "Sun Aug 16 09:00:00 2026"})
+
+    assert SystemProxy(sentinel, runner=commands).ownership() == "dead"
+
+
+def test_a_reused_process_id_is_dead_rather_than_a_live_owner(sentinel):
+    """The reason the start time exists at all (probe 3).
+
+    A record that survives a reboot names an id that now belongs to something unrelated. With a
+    liveness check alone that process answers "alive", the record is respected forever, and a
+    self-healing bug becomes a permanent one — strictly worse than the defect being fixed.
+    """
+    commands = FakeCommands({("/bin/ps",): "Mon Aug 17 09:15:00 2026\n"})
+    write_sentinel(sentinel, {"pid": 4242, "started": "Sun Aug 16 09:00:00 2026"})
+
+    proxy = SystemProxy(sentinel, runner=commands)
+
+    assert proxy.ownership() == "dead"
+    assert proxy.repair() == PRIOR
+    assert not sentinel.exists()
+
+
+def test_an_unreadable_start_time_restores_connectivity_rather_than_withholding_it(sentinel):
+    """Unknown resolves to dead, which is the same direction this module already fails in for a
+    record it cannot parse at all: lost fidelity beats a machine that cannot reach the network."""
+    commands = FakeCommands({("/bin/ps",): ""})
+    write_sentinel(sentinel, {"pid": 4242, "started": PROCESS_START.strip()})
+
+    proxy = SystemProxy(sentinel, runner=commands)
+
+    assert proxy.ownership() == "dead"
+    assert proxy.repair() == PRIOR
+
+
+def test_an_empty_start_time_never_matches_an_empty_start_time(sentinel):
+    """Both sides unknown must not look like a match, or two unrelated processes are one."""
+    commands = FakeCommands({("/bin/ps",): ""})
+    write_sentinel(sentinel, {"pid": os.getpid(), "started": ""})
+
+    assert SystemProxy(sentinel, runner=commands).ownership() == "dead"
+
+
+# --- what each path does with a record it does not own ------------------------
+
+
+def test_repair_at_start_leaves_a_live_foreign_record_alone(sentinel, tmp_path):
+    """A new window starting up must not un-route the window that is recording."""
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": os.getpid() + 1, "started": PROCESS_START.strip()})
+
+    message = repair_system_proxy(tmp_path, runner=commands)
+
+    assert commands.mutations == []
+    assert sentinel.exists()
+    assert message is not None and str(os.getpid() + 1) in message
+
+
+def test_restore_on_stop_leaves_a_live_foreign_record_alone(sentinel):
+    """`stop_capture` reaches this through the target's teardown. Restoring here would put the
+    machine back while another process is still routing traffic at a proxy it owns."""
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": os.getpid() + 1, "started": PROCESS_START.strip()})
+
+    assert SystemProxy(sentinel, runner=commands).restore() is None
+    assert commands.mutations == []
+    assert sentinel.exists()
+
+
+def test_restoring_on_exit_leaves_a_live_foreign_record_alone(sentinel):
+    """atexit and both signal handlers share this callback, so this covers the exit and the
+    signal paths — the same argument the handler test above makes."""
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": os.getpid() + 1, "started": PROCESS_START.strip()})
+
+    SystemProxy(sentinel, runner=commands).restore_on_exit()
+
+    assert commands.mutations == []
+    assert sentinel.exists()
+
+
+def test_the_signal_handler_leaves_a_live_foreign_record_alone(sentinel):
+    """The signal path, through the handler that is actually installed.
+
+    Driven with a callable previous disposition on purpose: the handler chains to it and returns,
+    where the default disposition would re-raise and take the test runner down with it. That branch
+    is why this can be asserted at all, and it is the only coverage `_make_signal_handler` has.
+    """
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": os.getpid() + 1, "started": PROCESS_START.strip()})
+    proxy = SystemProxy(sentinel, runner=commands)
+    chained = []
+
+    handler = proxy._make_signal_handler(
+        signal.SIGTERM, lambda received, frame: chained.append(received)
+    )
+    handler(signal.SIGTERM, None)
+
+    assert commands.mutations == []
+    assert sentinel.exists()
+    # The signal still does what it was going to do, which is the other half of this handler.
+    assert chained == [signal.SIGTERM]
+
+
+def test_a_dead_owners_record_is_still_repaired_at_the_next_start(sentinel, tmp_path):
+    """Crash recovery is unchanged: a dead owner is the case this machinery already existed for."""
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": 4242, "started": PROCESS_START.strip()})
+
+    message = repair_system_proxy(tmp_path, runner=unreadable_start_time(commands))
+
+    assert message is not None and "died without restoring" in message
+    assert ["-setwebproxy", "Wi-Fi", "127.0.0.1", "9090"] in commands.mutations
+    assert not sentinel.exists()
+
+
+def test_a_corrupt_record_naming_a_live_owner_still_unproxies_the_machine(sentinel, tmp_path):
+    """Ownership cannot be read out of a record that cannot be parsed, so the existing fail-safe
+    wins: an owner key is not enough to make an unreadable record someone's property."""
+    sentinel.write_text(
+        json.dumps({"owner": {"pid": os.getpid() + 1, "started": PROCESS_START.strip()}})
+    )
+    commands = FakeCommands()
+
+    repair_system_proxy(tmp_path, runner=commands)
+
+    assert ["-setwebproxystate", "Wi-Fi", "off"] in commands.mutations
+    assert ["-setsecurewebproxystate", "Wi-Fi", "off"] in commands.mutations
+    assert not sentinel.exists()
+    assert sentinel.with_suffix(".corrupt").exists()

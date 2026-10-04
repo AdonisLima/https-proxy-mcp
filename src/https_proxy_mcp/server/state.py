@@ -12,7 +12,6 @@ and an Exchange that was evicted says so rather than looking like one that never
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -33,7 +32,12 @@ from https_proxy_mcp.runs.registry import Run, RunRegistry
 from https_proxy_mcp.targets import CaptureObservations, CaptureTarget, build_target
 from https_proxy_mcp.targets.systemproxy import (
     CommandRunner,
+    Ownership,
+    ProxyHeldElsewhereError,
+    ProxyOwner,
+    SystemProxy,
     SystemProxyState,
+    resolve_ownership,
     run_command,
     sentinel_path,
 )
@@ -281,6 +285,7 @@ class CaptureState:
         port: int,
         scope: list[str] | None,
         udid: str | None = None,
+        passthrough: bool = True,
         capacity: int = ExchangeStore.DEFAULT_CAPACITY,
     ) -> dict[str, Any]:
         """Begin a Session: prune, prepare the target, start the proxy, then route to it."""
@@ -294,17 +299,49 @@ class CaptureState:
         capture_target = self.build_target(target, udid=udid)
 
         # prepare() is where a target repairs state a dead predecessor left behind, so it runs
-        # before anything else can trip over it.
-        capture_target.prepare()
+        # before anything else can trip over it — and where it refuses when the predecessor is
+        # still alive. Translated here because a Capture Target raises a plain error: the protocol
+        # is what makes another target an addition rather than a refactor, and it would stop being
+        # that the moment implementing it meant importing the MCP framework.
+        try:
+            capture_target.prepare()
+        except ProxyHeldElsewhereError as exc:
+            raise ToolError(str(exc)) from None
         trust = capture_target.ensure_trusted()
 
-        session = Session.create(self._root, target=target, port=port, scope=scope, udid=udid)
+        # Passthrough (CONTEXT.md). The Scope's hosts are the ones decrypted; every other connection
+        # is forwarded unopened and reaches its destination with the real certificate, so a browser
+        # or a second simulator that never trusted the Interception Authority is untouched by a
+        # capture it was never part of. Two things are deliberate here:
+        #
+        # * It takes the **Scope's** hosts rather than a list of its own. An agent keeping two
+        #   nearly-identical host lists in step is a trap, and in practice they are always the same.
+        # * An empty Scope is not a set of hosts to decrypt. It reports nothing (`reporting.py`),
+        #   and passing everything through would record nothing at all — whereas intercepting
+        #   everything leaves the traffic reachable by id and in an export.
+        intercept_hosts = tuple(scope) if passthrough and scope else None
+        session = Session.create(
+            self._root,
+            target=target,
+            port=port,
+            scope=scope,
+            udid=udid,
+            # The condition, not the parameter: `passthrough=True` with no Scope decrypts
+            # everything, and a manifest claiming otherwise would send a later reader looking for
+            # traffic that was recorded all along.
+            passthrough=intercept_hosts is not None,
+        )
         # Pruned *after* creating, so the invariant is exactly "RETAINED_SESSIONS remain"
         # rather than that many plus the new one. The new Session is the newest, so it is
         # never the one removed.
         prune_sessions(self._root)
         store = ExchangeStore(session.dir, capacity=capacity)
-        runtime = self._runtime_factory(store, port=port, confdir=self._root / CONFDIR_NAME)
+        runtime = self._runtime_factory(
+            store,
+            port=port,
+            confdir=self._root / CONFDIR_NAME,
+            intercept_hosts=intercept_hosts,
+        )
 
         try:
             await runtime.start()
@@ -331,6 +368,9 @@ class CaptureState:
             "host": runtime.host,
             "target": target,
             "scope": list(session.scope) if session.scope is not None else None,
+            # Reported so the default engaging is never silent: it changes what the *rest of the
+            # machine* sees, which is not something an agent should have to infer from a default.
+            "passthrough": session.passthrough,
             "session_dir": str(session.dir),
             "trust": self._trust,
         }
@@ -372,6 +412,12 @@ class CaptureState:
                 "recording": False,
                 "detail": NOT_RECORDING,
                 "sessions_root": str(self._root),
+                # Reported here as well as while recording, and this is the branch that matters:
+                # the machine can be proxied by a process that is gone or by another editor
+                # window, and "is my machine still proxied?" is asked precisely when this Session
+                # is not the one holding it. The answer comes off disk, so it never needed a
+                # Session to be readable.
+                "proxy": self.proxy_state(),
             }
 
         assert self._session is not None and self._store is not None and self._runtime is not None
@@ -398,34 +444,91 @@ class CaptureState:
         }
 
     def proxy_state(self) -> dict[str, Any]:
-        """Whether the machine's system proxy is currently redirected, and to what.
+        """Whether the machine's system proxy is currently redirected, to what, and by whom.
 
         Read from the sentinel rather than from the target, because the sentinel is the thing that
         outlives the process — this is the one piece of Session state that can survive a crash, so
         "is my machine currently proxied?" should be answerable without reading a file by hand.
+
+        The owner is what makes the answer actionable. There is one system proxy on the machine and
+        every editor window runs its own server, so a redirect may well belong to a process this
+        one cannot see or stop.
         """
         sentinel = sentinel_path(self._root)
         if not sentinel.exists():
             return {"redirected": False, "detail": "the system proxy is not redirected"}
 
-        try:
-            prior = SystemProxyState.from_dict(json.loads(sentinel.read_text()))
-        except (ValueError, KeyError, TypeError):
+        proxy = SystemProxy(sentinel, runner=self._runner)
+        record = proxy.read_record()
+        if record is None:
             return {
                 "redirected": True,
+                # Every key the branch below carries, so a caller reads one shape either way.
+                # Reporting three keys and omitting two was the whole defect: a KeyError raised in
+                # exactly the branch that says "something is wrong here" is how an agent ends up
+                # concluding the machine is not proxied. ``service`` and ``owner`` are genuinely
+                # unknown — the record is the only thing that knew either, and it will not parse —
+                # while the path is known, and is what a human needs to go and look at the file.
+                "service": None,
+                "sentinel": str(sentinel),
+                "owner": None,
                 "detail": f"redirected, but the sentinel at {sentinel} could not be read;"
                 " the next server start will switch the proxy off to restore connectivity",
             }
 
+        owner = record.owner
+        ownership = resolve_ownership(owner, runner=self._runner)
         return {
             "redirected": True,
-            "service": prior.service,
+            "service": record.prior.service,
             "sentinel": str(sentinel),
-            "detail": (
-                f"{prior.service} is routed through the capture port; it will be restored to"
-                f" server={prior.server_summary} on stop_capture"
-            ),
+            # ``ours`` is the field an agent acts on: stop_capture puts back a redirect this
+            # process made, and nothing else.
+            "owner": None if owner is None else {"pid": owner.pid, "ours": ownership == "ours"},
+            "detail": _proxy_detail(record.prior, owner, ownership),
         }
+
+
+def _proxy_detail(
+    prior: SystemProxyState,
+    owner: ProxyOwner | None,
+    ownership: Ownership,
+) -> str:
+    """One sentence about a redirect, branched on who owns it.
+
+    The promise that state will be restored on ``stop_capture`` is only made about a record this
+    process owns. For a record another live process holds it is simply false — stopping here
+    restores nothing, because restoring someone else's redirect is the defect this work removes —
+    and prose that is confidently wrong is what sent the developer looking in the wrong place.
+    """
+    routed = f"{prior.service} is routed through the capture port"
+    restored_at_the_next_start = f"The next server start restores server={prior.server_summary}"
+
+    # Checked before the ownership states so the rest can name a pid: a record with no owner is
+    # the only one that resolves to `absent`, and it has no process to name.
+    if owner is None:
+        return (
+            f"{routed}, and the record does not name the process that did it, so nobody owns it."
+            f" {restored_at_the_next_start}"
+        )
+
+    if ownership == "ours":
+        return (
+            f"{routed} by this process (pid {owner.pid});"
+            f" it will be restored to server={prior.server_summary} on stop_capture"
+        )
+
+    if ownership == "live_foreign":
+        return (
+            f"{routed} by another https-proxy-mcp process (pid {owner.pid}) that is still running."
+            " This Session does not own it, so stopping here leaves it in place;"
+            f" `kill {owner.pid}` makes that process put the machine back on its way out"
+        )
+
+    return (
+        f"{routed} by a process that is no longer running (pid {owner.pid}), so it was left behind"
+        f" rather than released. {restored_at_the_next_start}"
+    )
 
 
 def _observed_dict(observed: CaptureObservations) -> dict[str, Any]:

@@ -11,14 +11,16 @@ correct. Each test below pins one cause to one status.
 """
 
 import json
+import os
 
 import pytest
 
-from fake_commands import FakeCommands
+from fake_commands import PROCESS_START, FakeCommands
 from https_proxy_mcp.targets import CaptureTarget, build_target, known_targets
 from https_proxy_mcp.targets.base import CaptureObservations
 from https_proxy_mcp.targets.ios_simulator import IosSimulatorTarget
 from https_proxy_mcp.targets.simctl import authority_digest, ensure_authority
+from test_sentinel import write_sentinel
 from test_simctl import MODERN_STORE, write_trust_store
 
 BOOTED_UDID = "F48AAE9F-4D3F-4817-9050-7B4B0024CF07"
@@ -194,6 +196,24 @@ def test_teardown_is_safe_to_repeat(tmp_path):
 
     target.teardown()
     target.teardown()
+
+
+def test_teardown_leaves_a_redirect_owned_by_a_live_foreign_process_alone(tmp_path):
+    """The stop path, reached the way `stop_capture` reaches it.
+
+    Two editor windows share one sentinel because they share a root, and this is the call that
+    used to restore the machine out from under the other one — leaving it recording while
+    receiving nothing.
+    """
+    write_sentinel(
+        tmp_path / "proxy-state.json", {"pid": os.getpid() + 1, "started": PROCESS_START.strip()}
+    )
+    target, commands = build(tmp_path)
+
+    target.teardown()
+
+    assert commands.mutations == []
+    assert (tmp_path / "proxy-state.json").exists()
 
 
 def test_preparing_repairs_a_sentinel_left_by_a_dead_process(tmp_path):

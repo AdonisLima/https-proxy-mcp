@@ -14,15 +14,17 @@ separate tool that is never implicit.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
-from fake_commands import FakeCommands
+from fake_commands import PROCESS_START, FakeCommands
 from https_proxy_mcp.server import build_server
 from https_proxy_mcp.server.state import CaptureState
 from https_proxy_mcp.targets.simctl import authority_digest, ensure_authority
 from stub_runtime import StubRuntime
 from test_ios_target import BOOTED_UDID, SHUTDOWN_UDID, devices_json
+from test_sentinel import write_sentinel
 from test_simctl import MODERN_STORE, write_trust_store
 from test_tools_exchanges import captured
 from tool_calls import call
@@ -427,6 +429,94 @@ async def test_status_reports_no_redirection_for_a_target_that_arranges_none(ser
     result = await call(server, "get_status")
 
     assert result["proxy"]["redirected"] is False
+
+
+async def test_status_reports_the_proxy_even_when_nothing_is_recording(server, tmp_path):
+    """The question that cost a whole debugging session, and the answer it was denied.
+
+    Proxy state is read from the sentinel, which is process-independent, so it was always
+    answerable — it was simply not reported unless this Session happened to be recording, which
+    is exactly when nobody needs to ask. A window that has gone away leaves this behind.
+    """
+    write_sentinel(tmp_path / "proxy-state.json", {"pid": 4242, "started": PROCESS_START.strip()})
+
+    result = await call(server, "get_status")
+
+    assert result["recording"] is False
+    assert result["proxy"]["redirected"] is True
+    assert result["proxy"]["service"] == "Wi-Fi"
+
+
+async def test_status_names_the_owner_and_says_when_it_is_this_process(server, state, tmp_path):
+    """An agent's next move depends entirely on this: stop_capture fixes a redirect we own and
+    nothing else."""
+    trust_the_authority(tmp_path)
+    await state.start(target="ios-simulator", port=0, scope=None, udid=BOOTED_UDID)
+
+    result = await call(server, "get_status")
+
+    assert result["proxy"]["owner"] == {"pid": os.getpid(), "ours": True}
+    assert "on stop_capture" in result["proxy"]["detail"]
+
+
+async def test_status_does_not_promise_to_restore_a_redirect_this_process_does_not_own(
+    server, tmp_path
+):
+    """The existing sentence promised restoration on stop_capture unconditionally. For a record
+    another live process holds that promise is simply false, and prose that is confidently wrong
+    is worse than prose that says nothing — it is what sends the developer to the wrong window."""
+    holder = os.getpid() + 1
+    write_sentinel(tmp_path / "proxy-state.json", {"pid": holder, "started": PROCESS_START.strip()})
+
+    result = await call(server, "get_status")
+
+    assert result["proxy"]["owner"] == {"pid": holder, "ours": False}
+    assert "will be restored to server=" not in result["proxy"]["detail"]
+    assert str(holder) in result["proxy"]["detail"]
+
+
+async def test_status_reports_a_redirect_left_behind_by_a_process_that_is_gone(server, tmp_path):
+    """The state the field report was actually in: proxied by nobody. Reported as not ours, so an
+    agent does not read it as a Session it can stop."""
+    write_sentinel(
+        tmp_path / "proxy-state.json", {"pid": 4242, "started": "Sun Aug 16 09:00:00 2026"}
+    )
+
+    result = await call(server, "get_status")
+
+    assert result["proxy"]["owner"] == {"pid": 4242, "ours": False}
+    assert "no longer running" in result["proxy"]["detail"]
+
+
+async def test_status_reports_a_record_that_names_no_owner_without_inventing_one(server, tmp_path):
+    """A record from before the owner existed still has to be reportable. Reporting nobody is the
+    honest answer, and it is the same fail-safe direction the repair path takes."""
+    write_sentinel(tmp_path / "proxy-state.json", None)
+
+    result = await call(server, "get_status")
+
+    assert result["proxy"]["redirected"] is True
+    assert result["proxy"]["owner"] is None
+
+
+async def test_status_reports_the_same_shape_for_a_record_it_cannot_read(server, tmp_path):
+    """The one branch whose shape used to differ, and the one place it mattered least to differ in.
+
+    A caller reading ``proxy["owner"]`` or ``proxy["service"]`` got a KeyError here and nowhere
+    else — raised in exactly the branch that exists to say something is wrong, which is how an
+    agent ends up concluding the machine is not proxied at all. What cannot be known is reported
+    as null; the path is reported, because it is what a human needs to go and read the file.
+    """
+    sentinel = tmp_path / "proxy-state.json"
+    sentinel.write_text("{ this is not json")
+
+    result = await call(server, "get_status")
+
+    assert result["proxy"]["redirected"] is True
+    assert result["proxy"]["owner"] is None
+    assert result["proxy"]["service"] is None
+    assert result["proxy"]["sentinel"] == str(sentinel)
+    assert "could not be read" in result["proxy"]["detail"]
 
 
 async def test_status_reports_the_tls_failure_counts(server, state, tmp_path):

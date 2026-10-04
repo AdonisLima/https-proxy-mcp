@@ -24,10 +24,29 @@
 - **`curl` through the proxy to an `https://` URL fails with exit 60**, `unable to get local
   issuer certificate` — correct, since `CurlTarget` arranges no trust by design. Use `http://`,
   or `--cacert <root>/mitmproxy/mitmproxy-ca-cert.pem`, or `-k`. All three verified.
+- **`fixture_server.serve_tls` needs `ssl_verify_upstream_trusted_ca` to be *intercepted*.**
+  mitmproxy verifies the upstream certificate, and the fixture's authority is unknown to the
+  system, so an intercepted request to it answers `502 Certificate verify failed` with the real
+  body nowhere in sight. Point the option at `fixture.authority_pem` — measured: 502 becomes 200
+  and the client still sees `mitmproxy` as the issuer, which is the whole point of the assertion.
+  A passed-through request needs none of this, because nothing opens the connection.
+- **Read a peer certificate immediately after `connect()`, not after `getresponse()`.**
+  `http.client` drops its socket when the response says close, and a proxied response does — so
+  `connection.sock` is `None` by the time you ask, and the `AttributeError` reads like a failed
+  request rather than a late question.
 - **`pytest-asyncio` may run an async-generator fixture's setup and teardown in different
   tasks.** The anyio cancel scopes inside `stdio_client` reject that: "Attempted to exit cancel
   scope in a different task". Keep an MCP client's whole lifetime inside the test body.
 - **`timeout` does not exist on macOS.** Don't reach for it in test scripts.
+- **A test about a *live* foreign owner must read the real process table.** The child in
+  `test_kill9_recovery.py` records its own start time from a real `ps`, so a parent answering `ps`
+  from `FakeCommands` disagrees with it, the live child resolves to **dead**, and every ownership
+  assertion is then about the wrong branch — while still passing, because a dead owner's record is
+  repaired and the record does go away. `test_two_windows.py::real_process_table` stubs
+  `networksetup` and `scutil` and lets `ps` through, which is read-only.
+- **From another process, "the sentinel is gone" is not evidence that anything was restored.** A
+  child that unlinked the file and issued no command satisfies it. The child's stubbed runner logs
+  every argv to `child-commands.jsonl` for that reason; assert on `child_mutations(tmp_path)`.
 
 ## Tests that cannot fail
 

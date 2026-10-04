@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from https_proxy_mcp.capture.exchange import Exchange
+from https_proxy_mcp.capture.hostsets import host_matches
 
 #: Domains whose traffic is OS or platform chatter rather than the app under test. Matched on
 #: label boundaries, so ``apple.com`` covers ``gs-loc.apple.com`` but not ``notapple.com``.
@@ -68,16 +69,19 @@ def is_denied(host: str) -> bool:
 def in_scope(host: str, scope: tuple[str, ...]) -> bool:
     """Whether ``host`` is one of the hosts the agent said it cared about.
 
-    An entry covers its subdomains, and a leading ``*.`` is accepted and means the same thing —
-    agents write the wildcard whether or not it is needed, and it should mean what it looks
-    like rather than silently matching nothing.
+    A thin delegate to :func:`~https_proxy_mcp.capture.hostsets.host_matches`, which owns what a
+    host entry means — the entry covers its subdomains, and a leading ``*.`` is accepted and means
+    the same thing. The rule left this module once something other than reporting needed it: it is
+    also what decides which hosts are *intercepted*, and two copies of it would be free to drift
+    into disagreeing about the same host. The name stays here because a Scope is a reporting
+    narrowing, and both of its callers read better for it.
+
+    ``is_denied`` above still carries its own copy of the covers-its-subdomains arithmetic, which is
+    deliberate rather than an oversight: the denylist is a fixed list of bare suffixes with no
+    ``*.`` spelling and no root dot, it feeds reporting only, and so it cannot produce the
+    reporting-versus-interception drift :mod:`~https_proxy_mcp.capture.hostsets` exists to prevent.
     """
-    name = host.lower().rstrip(".")
-    for raw in scope:
-        entry = raw.lower().rstrip(".").removeprefix("*.")
-        if name == entry or name.endswith(f".{entry}"):
-            return True
-    return False
+    return host_matches(host, scope)
 
 
 @dataclass(frozen=True, slots=True)

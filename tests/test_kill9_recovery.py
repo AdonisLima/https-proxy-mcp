@@ -42,7 +42,7 @@ PRIOR = SystemProxyState(
 #: A child that redirects the (stubbed) system proxy and then waits to be killed. It uses the
 #: real SystemProxy, so the sentinel it leaves behind is the real thing.
 CHILD = '''
-import sys, time, json
+import subprocess, sys, time, json
 from pathlib import Path
 from https_proxy_mcp.targets.systemproxy import SystemProxy
 
@@ -51,6 +51,16 @@ prior = json.loads(Path(sys.argv[2]).read_text())
 
 def runner(argv, *, stdin=None):
     """Stands in for networksetup and scutil so the real machine is never touched."""
+    # Every command is logged where the parent can read it, because from another process the only
+    # other evidence of what this child did is whether its sentinel is still there — and a child
+    # that deleted the file without restoring anything would satisfy that.
+    with open(root / "child-commands.jsonl", "a") as handle:
+        handle.write(json.dumps(argv) + "\\n")
+    # `ps` is the exception, and deliberately real: the sentinel records who wrote it, and a
+    # canned start time would make the record indistinguishable from one this parent wrote. Reading
+    # the process table changes nothing on the machine.
+    if argv[0].endswith("ps"):
+        return subprocess.run(argv, capture_output=True, text=True).stdout
     if argv[0].endswith("scutil"):
         if stdin and "Setup:/Network/Service/" in stdin:
             return "<dictionary> {\\n  UserDefinedName : Wi-Fi\\n}\\n"
@@ -108,6 +118,18 @@ def kill9(child: subprocess.Popen) -> None:
     assert child.returncode in (-signal.SIGKILL, 137), child.returncode
 
 
+def child_mutations(tmp_path) -> list[list[str]]:
+    """The machine-changing commands the child issued, in order, stripped of the binary path.
+
+    The same view :attr:`FakeCommands.mutations` gives in-process, read back out of the log the
+    child's stubbed runner wrote. It is what lets a test assert that the child *put the prior
+    state back* rather than only that its sentinel went away.
+    """
+    log = tmp_path / "child-commands.jsonl"
+    issued = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    return [argv[1:] for argv in issued if any(part.startswith("-set") for part in argv)]
+
+
 # --- the criterion ------------------------------------------------------------
 
 
@@ -119,6 +141,17 @@ def test_a_killed_server_leaves_a_complete_sentinel_behind(tmp_path):
     sentinel = tmp_path / SENTINEL_NAME
     assert sentinel.exists()
     assert SystemProxyState.from_dict(json.loads(sentinel.read_text())) == PRIOR
+
+
+def test_the_sentinel_names_the_process_that_wrote_it(tmp_path):
+    """Written by one process and read by another, which is the only condition under which the
+    owner is worth anything. A same-process test cannot tell a recorded identity from this one."""
+    child = start_child(tmp_path)
+    kill9(child)
+
+    owner = json.loads((tmp_path / SENTINEL_NAME).read_text())["owner"]
+    assert owner["pid"] == child.pid
+    assert owner["started"]
 
 
 def test_a_restart_restores_the_system_proxy_after_a_kill_9(tmp_path):

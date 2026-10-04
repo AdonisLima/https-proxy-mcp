@@ -97,6 +97,7 @@ def test_the_manifest_records_the_session(tmp_path):
         port=9090,
         scope=["api.example.com"],
         udid="F48AAE9F-4D3F-4817-9050-7B4B0024CF07",
+        passthrough=True,
         now=at(10),
     )
 
@@ -108,6 +109,9 @@ def test_the_manifest_records_the_session(tmp_path):
         "target": "ios-simulator",
         "port": 9090,
         "scope": ["api.example.com"],
+        # Beside the Scope, because it is what says whether the hosts *outside* it were ever
+        # decrypted — and so whether a listing narrowing can explain their absence at all.
+        "passthrough": True,
         # Recorded so a Session directory found later says which simulator produced it.
         "udid": "F48AAE9F-4D3F-4817-9050-7B4B0024CF07",
     }
@@ -117,6 +121,14 @@ def test_an_absent_scope_is_recorded_as_null(tmp_path):
     session = Session.create(tmp_path, target="curl", port=8080)
 
     assert json.loads((session.dir / "session.json").read_text())["scope"] is None
+
+
+def test_passthrough_is_recorded_as_off_unless_it_was_in_force(tmp_path):
+    """A Session that decrypted everything must not read as one that passed hosts through, or the
+    later reader hunts for traffic that was recorded all along."""
+    session = Session.create(tmp_path, target="curl", port=8080)
+
+    assert json.loads((session.dir / "session.json").read_text())["passthrough"] is False
 
 
 def test_the_start_time_is_an_epoch_timestamp(tmp_path):

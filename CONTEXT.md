@@ -23,8 +23,12 @@ The certificate authority whose signature the Capture Target must trust in order
 _Avoid_: cert, CA cert, root (all ambiguous between the authority and the leaf certificates it signs)
 
 **Scope**:
-The set of hosts an agent is currently interested in. Narrows what is reported, never what is captured.
+The set of hosts an agent is currently interested in. Narrows what is reported; narrows what is intercepted only under Passthrough.
 _Avoid_: filter, allowlist, include list
+
+**Passthrough**:
+The condition of a connection being forwarded without being decrypted, so the Capture Target sees the real certificate rather than one signed by the Interception Authority. Traffic in Passthrough is invisible to this tool, and unaffected by it — which is the point: the machine is proxied as a whole, so everything the agent has not asked about should reach its destination untouched.
+_Avoid_: ignore (mitmproxy's word for the same option), bypass (the Mac's proxy settings have a bypass list of their own, which is a different mechanism at a different layer), tunnel, allowlist
 
 ### Testing
 

@@ -79,10 +79,15 @@ def repair_before_serving(
     """Layer 3 of the teardown guarantee: restore a sentinel a dead predecessor left behind.
 
     Runs before the server does anything else, which is what makes ``kill -9`` survivable —
-    handlers cover an orderly exit and nothing else. Two consequences of running it *first*:
-    the machine's networking is fixed even if this start then fails for an unrelated reason, and
-    ``route_traffic`` can safely refuse to overwrite a sentinel it finds, because by then any
-    sentinel present really does belong to this process.
+    handlers cover an orderly exit and nothing else. Running it *first* means the machine's
+    networking is fixed even if this start then fails for an unrelated reason.
+
+    What the ordering no longer buys is the old justification for ``route_traffic``'s refusal.
+    This used to restore and delete *every* record it found, so any sentinel present afterwards
+    really did belong to this process. It now deliberately leaves a live foreign owner's record
+    in place, so a sentinel present later may well belong to another process — which is why the
+    Session that would trip over it is refused at ``prepare()``, naming the holder, rather than at
+    ``redirect()``, which can only say that a file is in the way.
 
     Reported on **stderr**. stdout is the MCP transport, and while a stray line there turns out
     not to corrupt framing, an interleaved write inside a JSON-RPC line would.

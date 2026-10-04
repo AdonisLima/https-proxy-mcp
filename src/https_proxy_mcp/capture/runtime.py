@@ -19,6 +19,14 @@ guessed differently:
   cheap way never to find out, and no test can guard it: keep it that way on purpose.
 * **Port 0 works and reports back.** ``listen_addrs()`` gives the port actually bound, which
   is what lets a caller ask for "any free port" and still be told which one.
+
+Passthrough (CONTEXT.md) is the one decision here that is not about lifecycle. ``intercept_hosts``
+names the hosts to decrypt, and every other connection is forwarded without being opened — it
+arrives carrying the real certificate, so a browser or a simulator that never trusted the
+Interception Authority is unaffected by a capture it was never part of. ``None`` means intercept
+everything, which is mitmproxy's own default and this project's only behaviour before Passthrough
+existed. The patterns are rendered by :mod:`~https_proxy_mcp.capture.hostsets` from the same
+definition the Scope predicate answers from; nothing here writes one.
 """
 
 from __future__ import annotations
@@ -30,6 +38,7 @@ from mitmproxy.options import Options
 from mitmproxy.tools.dump import DumpMaster
 
 from https_proxy_mcp.capture.addon import CaptureAddon
+from https_proxy_mcp.capture.hostsets import allow_host_patterns
 from https_proxy_mcp.capture.store import ExchangeStore
 
 #: Loopback only. A proxy reachable from the network would be an open relay.
@@ -52,11 +61,17 @@ class ProxyRuntime:
         port: int,
         confdir: Path | str,
         host: str = LISTEN_HOST,
+        intercept_hosts: tuple[str, ...] | None = None,
     ) -> None:
         self._store = store
         self._requested_port = port
         self._confdir = Path(confdir)
         self._host = host
+        # Rendered once, here, so a pattern cannot be assembled anywhere else. An empty tuple lands
+        # in the same place as ``None`` because mitmproxy reads an empty ``allow_hosts`` as "open
+        # everything" — naming no hosts to decrypt is not something a caller can express, and
+        # `hostsets` leaves that decision to whoever computes the set (`server/state.py`).
+        self._allow_hosts = list(allow_host_patterns(intercept_hosts)) if intercept_hosts else []
         self._master: DumpMaster | None = None
         self._task: asyncio.Task[None] | None = None
         self._port: int | None = None
@@ -93,6 +108,10 @@ class ProxyRuntime:
         master.options.update(
             confdir=str(self._confdir),
             mode=[f"regular@{self._host}:{self._requested_port}"],
+            # Passthrough: empty is mitmproxy's "decrypt everything", which is what an unscoped
+            # Session wants. Set unconditionally rather than only when non-empty, so the option a
+            # started proxy carries is always this object's own decision.
+            allow_hosts=self._allow_hosts,
         )
         master.addons.add(CaptureAddon(self._store))
 

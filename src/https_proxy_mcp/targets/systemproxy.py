@@ -24,6 +24,17 @@ Two ``networksetup`` behaviours shape the restore plan and are easy to get wrong
   an unfaithful restore. This one was caught only by diffing the machine's real output after the
   live P3 run: both forms parse back to ``()``, so the round-trip assertion was satisfied while
   the machine had in fact been changed. A parser that normalises can hide a writer that does not.
+
+The record also names the process that wrote it, because there is one system proxy on the machine
+and every editor window runs its own copy of this server, all resolving to the same default root.
+Without an owner every process repairs, restores and deletes any record it finds: one window
+starting up switches off another window's routing, leaving a Session that reports it is recording
+while receiving nothing, and a window that has stopped can leave the machine routed through a proxy
+nobody is listening on. So each of those paths asks who owns the record first, and a live foreign
+owner's record is left entirely alone. Starting a Session is the one path that says so out loud:
+it is refused, naming the holder and the signal that releases it, because proceeding would either
+take the redirect over — the original defect with better manners — or bind a port for a Session
+that can never see traffic.
 """
 
 from __future__ import annotations
@@ -38,12 +49,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
-from typing import Any
+from typing import Any, Literal
 
 #: The binaries this module drives. Absolute, because a redirected system proxy is not the
 #: place to discover that `PATH` was surprising.
 NETWORKSETUP = "/usr/sbin/networksetup"
 SCUTIL = "/usr/sbin/scutil"
+PS = "/bin/ps"
 
 #: Sentinel filename, alongside ``sessions/`` under the root (SPEC.md, "Session directory").
 SENTINEL_NAME = "proxy-state.json"
@@ -55,6 +67,12 @@ CLEAR_BYPASS = "Empty"
 #: A command runner: takes an argv list, returns stdout. The seam that keeps every test in
 #: this module off the real machine. Production gets :func:`run_command`.
 CommandRunner = Callable[..., str]
+
+#: Who the sentinel belongs to, resolved against the process table. Three of the four mean "go
+#: ahead": only a live foreign owner's record is left alone, and ``absent`` — a record that names
+#: no owner, or one whose owner cannot be read out of it at all — is treated exactly like ``dead``,
+#: because connectivity is the fail-safe this module already points at.
+Ownership = Literal["ours", "dead", "absent", "live_foreign"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +127,39 @@ def parse_bypass_domains(output: str) -> tuple[str, ...]:
         for line in output.splitlines()
         if line.strip() and " " not in line.strip() and "\t" not in line.strip()
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ProxyOwner:
+    """The process that redirected the machine's proxy, as the sentinel records it.
+
+    ``started`` is an opaque string from ``ps -o lstart=``, compared for **equality only** and
+    never parsed. It is what closes process-id reuse: with a liveness check alone, a record that
+    survives a reboot names an id that now belongs to something unrelated, liveness answers
+    "alive", repair is declined, and a self-healing bug becomes a permanent one — strictly worse
+    than the defect being fixed.
+    """
+
+    pid: int
+    started: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {"pid": self.pid, "started": self.started}
+
+    @classmethod
+    def from_dict(cls, data: Any) -> ProxyOwner | None:
+        """Rebuild an owner, or ``None`` when the record does not carry a usable one.
+
+        Tolerant rather than strict, because the alternative to "no owner" is not an error the
+        developer can act on: an unreadable owner resolves to dead, so the machine's networking
+        comes back either way.
+        """
+        if not isinstance(data, dict):
+            return None
+        try:
+            return cls(pid=int(data["pid"]), started=str(data.get("started", "")))
+        except (KeyError, TypeError, ValueError):
+            return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +239,43 @@ class SystemProxyState:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ProxyRecord:
+    """A sentinel that could be read: the state to put back, and who is holding it there.
+
+    ``owner`` is ``None`` for a record that names none. There is no such record on disk anywhere,
+    so this is not a migration path — it is the fail-safe, and it points the same way as every
+    other unknown here.
+    """
+
+    prior: SystemProxyState
+    owner: ProxyOwner | None
+
+
+class ProxyHeldElsewhereError(RuntimeError):
+    """Another live process holds the machine's proxy, so this one may not take it.
+
+    Deliberately a plain exception. The core translates it into whatever its callers read — this
+    module is reached through the ``CaptureTarget`` protocol, and a target that had to import the
+    MCP framework in order to say "the machine's proxy is taken" would make the framework a
+    dependency of every future target, Android included.
+
+    Carries the holder as well as the message, because a caller that wants to *report* the pid
+    rather than quote a sentence should not have to parse one back out.
+    """
+
+    def __init__(self, holder: ProxyOwner) -> None:
+        self.holder = holder
+        super().__init__(
+            "the system proxy is already redirected by another https-proxy-mcp process"
+            f" (pid {holder.pid}) that is still running, so nothing has been started here."
+            " Taking the redirect over would leave that process recording nothing, and waiting"
+            f" for it would hang this session. `kill {holder.pid}` makes that process restore the"
+            " machine on its way out, after which this call succeeds; an uncatchable `kill -9`"
+            " leaves its record behind for the next server start to repair"
+        )
+
+
 def run_command(argv: list[str], *, stdin: str | None = None) -> str:
     """Run a system command and return its stdout, failing with something readable.
 
@@ -208,6 +296,39 @@ def run_command(argv: list[str], *, stdin: str | None = None) -> str:
             f" {result.stderr.strip() or result.stdout.strip() or 'no output'}"
         )
     return result.stdout
+
+
+def read_process_start(pid: int, runner: CommandRunner = run_command) -> str:
+    """The opaque start time of ``pid``, or ``""`` when it cannot be read.
+
+    ``ps`` exits non-zero for a process that is gone, which :func:`run_command` raises as an
+    ``OSError``. Empty therefore means *unknown*, and unknown must never compare equal to
+    unknown — two unrelated processes would look like one.
+    """
+    try:
+        return runner([PS, "-o", "lstart=", "-p", str(pid)]).strip()
+    except OSError:
+        return ""
+
+
+def resolve_ownership(
+    owner: ProxyOwner | None,
+    *,
+    runner: CommandRunner = run_command,
+) -> Ownership:
+    """Which of the four states a recorded owner is in, asked of the process table.
+
+    Both halves of the identity have to agree. A matching id with a *different* start time is a
+    reused id and resolves to ``dead`` — including when the id is our own, which after a reboot is
+    a real possibility rather than a hypothetical one.
+    """
+    if owner is None:
+        return "absent"
+
+    started = read_process_start(owner.pid, runner)
+    if not started or not owner.started or started != owner.started:
+        return "dead"
+    return "ours" if owner.pid == os.getpid() else "live_foreign"
 
 
 def resolve_primary_service(runner: CommandRunner = run_command) -> str:
@@ -323,15 +444,89 @@ class SystemProxy:
 
         ``os.replace`` after an explicit fsync, so a crash mid-write cannot leave a truncated
         sentinel — the one file whose corruption costs the machine's real configuration.
+
+        The owner is written here rather than by :meth:`SystemProxyState.to_dict`, because it is
+        not part of the prior state: it says who changed the machine, not what the machine looked
+        like. ``from_dict`` keys on its own fields, so it reads such a record unchanged.
         """
+        document = state.to_dict()
+        document["owner"] = self._identity().to_dict()
+
         self._sentinel.parent.mkdir(parents=True, exist_ok=True)
         scratch = self._sentinel.with_suffix(".partial")
         with open(scratch, "w") as handle:
-            json.dump(state.to_dict(), handle, indent=2)
+            json.dump(document, handle, indent=2)
             handle.flush()
             os.fsync(handle.fileno())
         scratch.chmod(0o600)
         os.replace(scratch, self._sentinel)
+
+    def _identity(self) -> ProxyOwner:
+        """This process, as the sentinel will record it.
+
+        The start time goes through the same runner seam as everything else here, which is what
+        keeps every test of the ownership rules off the real machine.
+        """
+        pid = os.getpid()
+        return ProxyOwner(pid=pid, started=read_process_start(pid, self._runner))
+
+    # --- ownership ------------------------------------------------------------
+
+    def read_record(self) -> ProxyRecord | None:
+        """The sentinel's prior state and owner, or ``None`` when it cannot be read.
+
+        Ownership cannot be read out of a record that cannot be *parsed*, so a corrupt sentinel
+        has no owner at all — which is what keeps the existing fail-safe ahead of the ownership
+        rules rather than behind them. An ``owner`` key on an otherwise unreadable record is not
+        enough to make it someone's property.
+        """
+        if not self._sentinel.exists():
+            return None
+
+        try:
+            document = json.loads(self._sentinel.read_text())
+            prior = SystemProxyState.from_dict(document)
+        except (ValueError, KeyError, TypeError):
+            return None
+        return ProxyRecord(prior=prior, owner=ProxyOwner.from_dict(document.get("owner")))
+
+    def ownership(self) -> Ownership:
+        """Who the sentinel on disk belongs to. ``absent`` when there is nothing to attribute.
+
+        The four-state answer, and deliberately **not** what the call sites use: they branch on
+        :meth:`foreign_holder`, which collapses the three safe states into ``None`` so a caller
+        cannot forget one. This exists so the four states can be asserted separately — the
+        distinction between ``dead`` and ``live_foreign`` is the whole fix, and a test that could
+        only see "safe or not" would not notice the two being confused.
+        """
+        record = self.read_record()
+        return "absent" if record is None else resolve_ownership(record.owner, runner=self._runner)
+
+    def foreign_holder(self) -> ProxyOwner | None:
+        """The live process holding the machine's proxy, when it is not this one.
+
+        The one query the careless call sites needed and did not have. ``None`` covers every case
+        in which acting is safe, so a caller branches once rather than enumerating four states.
+        """
+        record = self.read_record()
+        if record is None:
+            return None
+        if resolve_ownership(record.owner, runner=self._runner) != "live_foreign":
+            return None
+        return record.owner
+
+    def refuse_if_held(self) -> None:
+        """Raise if a live foreign process holds the record; do nothing at all otherwise.
+
+        The one path that refuses rather than skipping. Repair, stop and exit all *decline to act*
+        on a record they do not own, which is silent because there is nothing the caller wanted to
+        do that it now cannot. Starting a Session is different: proceeding means either taking the
+        redirect over — the original defect with better manners — or binding a port and reporting a
+        Session that will never see traffic. Both are worse than a message.
+        """
+        holder = self.foreign_holder()
+        if holder is not None:
+            raise ProxyHeldElsewhereError(holder)
 
     # --- restoring ------------------------------------------------------------
 
@@ -341,20 +536,27 @@ class SystemProxy:
         Returns what was restored, or ``None`` when there was nothing to restore. That case is
         the common one rather than the edge one: ``CaptureState.start`` calls teardown on every
         failure path, so this runs after starts that never redirected anything.
+
+        A record held by a live foreign owner is one of those nothings, and is the whole point of
+        the owner field: restoring here would put the machine back while another process is still
+        routing traffic at a proxy it believes it owns, leaving that Session reporting that it is
+        recording while receiving nothing.
         """
         if not self._sentinel.exists():
             return None
 
-        try:
-            recorded = SystemProxyState.from_dict(json.loads(self._sentinel.read_text()))
-        except (ValueError, KeyError, TypeError):
+        record = self.read_record()
+        if record is None:
             self._unproxy_after_losing_the_sentinel()
             return None
 
-        for argv in recorded.restore_commands():
+        if resolve_ownership(record.owner, runner=self._runner) == "live_foreign":
+            return None
+
+        for argv in record.prior.restore_commands():
             self._runner([NETWORKSETUP, *argv])
         self._sentinel.unlink(missing_ok=True)
-        return recorded
+        return record.prior
 
     def _unproxy_after_losing_the_sentinel(self) -> None:
         """Fail safe when the sentinel cannot be read.
@@ -378,6 +580,10 @@ class SystemProxy:
         This is the layer that covers ``kill -9``. It is the same operation as :meth:`restore`;
         the distinction is intent, and that the caller reports what it finds — a repaired
         sentinel is the only visible evidence that an earlier run died.
+
+        A dead owner is exactly the case this layer already existed for, so crash recovery is
+        unchanged by ownership. A *live* owner is not a crash at all, and is left alone; callers
+        that need to say so ask :meth:`foreign_holder` first.
         """
         return self.restore()
 
@@ -411,7 +617,9 @@ class SystemProxy:
             # narrows `previous` to a function type, which would make comparing it against the
             # Handlers enum provably non-overlapping. Both are side-effect free, so the order
             # is presentational: the guard itself is unchanged, and deliberately kept even
-            # though a Handlers member is never callable — nothing here is covered by a test.
+            # though a Handlers member is never callable. One test now reaches this factory and
+            # exercises the chaining branch below; the default-disposition branch after it still
+            # has no coverage, because re-raising would take the test runner down with it.
             if previous not in (signal.SIG_DFL, signal.SIG_IGN) and callable(previous):
                 previous(received, frame)
                 return
@@ -444,10 +652,23 @@ def repair_system_proxy(root: Path | str, *, runner: CommandRunner = run_command
 
     Called before anything else so a crashed predecessor cannot leave the machine proxied
     through a port this process is about to bind for something else.
+
+    A predecessor that is still *running* is not a crash, and taking its redirect away is the
+    defect the owner field exists to stop — every editor window on the machine starts one of
+    these, so this ran against live captures. It is reported rather than silently skipped,
+    because "another window holds your machine's proxy" is the fact that ends the investigation.
     """
     proxy = SystemProxy(sentinel_path(root), runner=runner)
     if not proxy.sentinel_path.exists():
         return None
+
+    holder = proxy.foreign_holder()
+    if holder is not None:
+        return (
+            f"the system proxy is redirected by another https-proxy-mcp process (pid {holder.pid})"
+            " that is still running, so it has been left alone;"
+            f" `kill {holder.pid}` makes that process restore the machine on its way out"
+        )
 
     restored = proxy.repair()
     if restored is None:
