@@ -59,6 +59,11 @@ object at the boundary.
   tested deliberately; the client parses stdout line by line and skips what it cannot parse. But
   an interleaved write *inside* a JSON-RPC line would corrupt it. No test enforces this.
 
+- **Requests still in flight narrow through `ReportingFilter.allows_pending`, beside the
+  Exchange path** — same window-first-then-host order, no Lens call (a Lens is a predicate over
+  Exchanges, and a pending request never became one). Add a fifth reporting narrowing in
+  `reporting.py` alone; there is no second copy of the window arithmetic to keep in step.
+
 `mypy` relaxes `disallow_untyped_calls` for `addon.py` and `runtime.py` only — mitmproxy ships
 `py.typed` but leaves `options.update`, `addons.add`, `addons.get`, `master.shutdown` and
 `headers.items` unannotated. Every other strictness setting still applies here. The declaration

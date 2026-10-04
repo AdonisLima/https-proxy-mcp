@@ -26,7 +26,6 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from https_proxy_mcp.capture.exchange import Exchange, PendingExchange
-from https_proxy_mcp.capture.reporting import in_scope
 from https_proxy_mcp.correlate.steps import Step, StepStatus
 from https_proxy_mcp.correlate.timeline import build_timeline
 from https_proxy_mcp.eventsources.explicit import StepStateError
@@ -278,36 +277,22 @@ def _traffic(
     """The Exchanges and open requests in scope for this Run, and how many were hidden.
 
     Narrowed in SPEC.md's order — Run window, then denylist, then Scope — with ``host_filter``
-    applied on top as a further narrowing rather than as a replacement. A Scope the agent set on
-    the Session still holds; asking about one host inside it cannot widen it.
+    joining the filter as a further per-call narrowing rather than a replacement: a Scope the
+    agent set on the Session still holds, and asking about one host inside it cannot widen it.
+    One filter narrows both collections — Exchanges through :meth:`ReportingFilter.allows`,
+    requests still in flight through :meth:`ReportingFilter.allows_pending` — so a narrowing
+    cannot be applied to one and forgotten for the other.
     """
-    reporting = state.reporting(window=run.window)
+    reporting = state.reporting(
+        window=run.window, hosts=(host_filter,) if host_filter is not None else None
+    )
     store = state.store
 
     everything = list(store)
     exchanges = [item for item in everything if reporting.allows(item)]
-    if host_filter is not None:
-        exchanges = [item for item in exchanges if in_scope(item.host, (host_filter,))]
-
-    pending = [
-        item
-        for item in store.pending
-        if _pending_in_window(item, run)
-        and reporting.allows_host(item.host)
-        and (host_filter is None or in_scope(item.host, (host_filter,)))
-    ]
+    pending = [item for item in store.pending if reporting.allows_pending(item)]
 
     return exchanges, pending, len(everything) - len(exchanges)
-
-
-def _pending_in_window(request: PendingExchange, run: Run) -> bool:
-    """Whether an open request was outstanding during this Run.
-
-    It has no end, so it cannot have finished before the window — only its start can put it
-    outside, and then only past the window's end.
-    """
-    _, end = run.window
-    return end is None or request.t_start <= end
 
 
 def _empty_note(state: CaptureState, run: Run, steps: int, exchanges: int) -> str | None:

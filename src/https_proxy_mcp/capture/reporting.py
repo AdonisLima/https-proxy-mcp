@@ -48,7 +48,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from https_proxy_mcp.capture.exchange import Exchange
+from https_proxy_mcp.capture.exchange import Exchange, PendingExchange
 from https_proxy_mcp.capture.hostsets import host_matches
 
 #: Domains whose traffic is OS or platform chatter rather than the app under test. Matched on
@@ -130,6 +130,10 @@ class ReportingFilter:
     #: where the Session starts, so a bad expression is refused there rather than at whichever
     #: listing happens to be the first to use it.
     lens: Callable[[Exchange], bool] | None = None
+    #: A per-call host narrowing — the ``host_filter`` a tool was given — or ``None`` for none.
+    #: Same lifetime as ``window``: a per-call decision, so it is passed in here rather than held
+    #: on the Session. It intersects with the Scope; it never replaces it.
+    hosts: tuple[str, ...] | None = None
 
     @property
     def narrows(self) -> bool:
@@ -139,26 +143,31 @@ class ReportingFilter:
             self.scope is not None
             or self.window is not None
             or self.lens is not None
+            or self.hosts is not None
             or not self.include_denied
         )
 
-    def allows_time(self, exchange: Exchange) -> bool:
-        """Whether this Exchange happened during the Run.
+    def _in_window(self, t_start: float, t_end: float | None) -> bool:
+        """Whether the interval ``(t_start, t_end)`` intersects the Run window.
 
         Narrows by **intersection**, not by start time. A request already in flight when the Run
         began is precisely the traffic a Timeline most wants — it overlaps the Run's first Steps,
         and an assertion failing because of it is the case ADR-0004 exists for. Testing
         ``t_start`` alone would throw it away.
 
-        An Exchange with no end never finished, so it cannot have finished before the window.
+        An interval with no end never finished, so it cannot have finished before the window.
         """
         if self.window is None:
             return True
 
         start, end = self.window
-        if end is not None and exchange.t_start > end:
+        if end is not None and t_start > end:
             return False
-        return exchange.t_end is None or exchange.t_end >= start
+        return t_end is None or t_end >= start
+
+    def allows_time(self, exchange: Exchange) -> bool:
+        """Whether this Exchange happened during the Run — see :meth:`_in_window`."""
+        return self._in_window(exchange.t_start, exchange.t_end)
 
     def allows_host(self, host: str) -> bool:
         """Whether traffic for ``host`` is reported at all.
@@ -166,9 +175,10 @@ class ReportingFilter:
         Separate from :meth:`allows` because it is also what decides which *TLS handshake
         failures* count — those never become Exchanges, so there is no Exchange to ask about.
 
-        A Scope beats the denylist: if the agent named a host explicitly, hiding it would be the
-        tool second-guessing an instruction, and the denylist's guess is far weaker than the
-        agent's statement.
+        A per-call ``hosts`` clause comes first and can only narrow: it intersects with whatever
+        follows, never replaces it. A Scope beats the denylist: if the agent named a host
+        explicitly, hiding it would be the tool second-guessing an instruction, and the
+        denylist's guess is far weaker than the agent's statement.
 
         The Lens does not apply here, and cannot. It is a predicate over Exchanges, and this
         question gets asked about hosts that have none — a TLS handshake that failed before a
@@ -176,6 +186,8 @@ class ReportingFilter:
         while leaving the handshake failure count exactly as machine-wide as ``diagnose_capture``
         already reports it to be.
         """
+        if self.hosts is not None and not in_scope(host, self.hosts):
+            return False
         if self.scope is not None:
             return in_scope(host, self.scope)
         if self.include_denied:
@@ -196,6 +208,27 @@ class ReportingFilter:
         if not (self.allows_time(exchange) and self.allows_host(exchange.host)):
             return False
         return self.lens is None or self.lens(exchange)
+
+    def allows_pending(self, request: PendingExchange) -> bool:
+        """Whether a request still in flight is reported.
+
+        Window first, then host — the same order as :meth:`allows`, so a pending record is
+        narrowed by exactly the predicate family an Exchange is, and a fifth narrowing added here
+        applies to both collections or to neither.
+
+        The window test is :meth:`_in_window` with no end: the request has not finished, so it
+        cannot have finished before the window — only its start can put it outside, and then only
+        past the window's end.
+
+        The Lens is absent by construction, not by oversight. A Lens is a predicate over
+        Exchanges, and a request still in flight never became one (CONTEXT.md's Lens entry) — so
+        there is no Lens call on this path and there cannot be, which is what keeps ADR-0009's
+        stated constraint structural rather than documented. A named method rather than a
+        structural Protocol over "has t_start/host" for the same reason: a Protocol needing
+        ``t_end`` would force a ``t_end = None`` shim onto :class:`PendingExchange`, which is the
+        "Exchanges with a null t_end" shape P4 rejected.
+        """
+        return self._in_window(request.t_start, None) and self.allows_host(request.host)
 
     def apply(self, exchanges: list[Exchange]) -> tuple[list[Exchange], int]:
         """The Exchanges that are reported, and how many were hidden."""

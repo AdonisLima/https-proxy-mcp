@@ -341,17 +341,24 @@ class CaptureState:
         *,
         include_denied: bool = False,
         window: tuple[float, float | None] | None = None,
+        hosts: tuple[str, ...] | None = None,
     ) -> ReportingFilter:
         """How a listing narrows what it shows: the Run window, the Session's Scope, the denylist.
 
-        Built per call rather than held, because ``include_denied`` and ``window`` are per-call
-        decisions and a cached filter would quietly ignore them. The Lens is not one of them: it
+        Built per call rather than held, because ``include_denied``, ``window`` and ``hosts`` are
+        per-call decisions and a cached filter would quietly ignore them. ``hosts`` joins
+        ``window`` as one of those: the ``host_filter`` a single call asked for, intersecting
+        with the Scope rather than replacing it. The Lens is not one of them: it
         belongs to the Session, and every caller of this method gets it whether or not it knew to
         ask. That is the whole reason it is here and not a parameter on the tools — a narrowing an
         agent has to remember on each call is one it will forget on the call that mattered.
         """
         return ReportingFilter(
-            scope=self.scope, include_denied=include_denied, window=window, lens=self._lens
+            scope=self.scope,
+            include_denied=include_denied,
+            window=window,
+            lens=self._lens,
+            hosts=hosts,
         )
 
     def exchange(self, exchange_id: int) -> Exchange:

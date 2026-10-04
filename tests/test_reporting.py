@@ -19,7 +19,7 @@ from dataclasses import replace
 
 import pytest
 
-from https_proxy_mcp.capture.exchange import Exchange
+from https_proxy_mcp.capture.exchange import Exchange, PendingExchange
 from https_proxy_mcp.capture.reporting import ReportingFilter, is_denied
 
 
@@ -258,3 +258,112 @@ def test_allows_host_ignores_the_window():
 
     assert reporting.allows_host("api.example.com") is True
     assert reporting.allows_host("gs-loc.apple.com") is False
+
+
+# --- pending: requests still in flight ----------------------------------------
+#
+# A pending record is narrowed by the same predicate family an Exchange is — window first, then
+# host — so a fifth narrowing added to this module applies to both collections or to neither.
+# The one narrowing absent from the pending path is the Lens, and it is absent by construction:
+# a Lens is a predicate over Exchanges, and a request still in flight never became one.
+
+
+def pending(host: str, t_start: float) -> PendingExchange:
+    """A request still in flight, on a host and at a moment the test chooses."""
+    return PendingExchange(
+        key="k",
+        t_start=t_start,
+        method="POST",
+        url=f"https://{host}/thing",
+        host=host,
+        path="/thing",
+        scheme="https",
+    )
+
+
+def test_a_pending_request_inside_the_window_is_reported():
+    reporting = ReportingFilter(window=(100.0, 200.0))
+
+    assert reporting.allows_pending(pending("api.example.com", 150.0)) is True
+
+
+def test_a_pending_request_started_after_a_closed_window_ended_is_not():
+    """It has no end, so it cannot have finished before the window — only its start can put it
+    outside, and then only past the window's end."""
+    reporting = ReportingFilter(window=(100.0, 200.0))
+
+    assert reporting.allows_pending(pending("api.example.com", 250.0)) is False
+    assert reporting.allows_pending(pending("api.example.com", 90.0)) is True
+
+
+def test_an_open_ended_window_reports_a_pending_request():
+    """A Run still in progress has no end yet, and its Timeline should show what is outstanding."""
+    reporting = ReportingFilter(window=(100.0, None))
+
+    assert reporting.allows_pending(pending("api.example.com", 5000.0)) is True
+
+
+def test_a_pending_request_on_a_denied_host_is_not_reported():
+    reporting = ReportingFilter()
+
+    assert reporting.allows_pending(pending("gs-loc.apple.com", 150.0)) is False
+    assert reporting.allows_pending(pending("api.example.com", 150.0)) is True
+
+
+def test_a_pending_request_respects_the_scope():
+    reporting = ReportingFilter(scope=("api.example.com",))
+
+    assert reporting.allows_pending(pending("api.example.com", 150.0)) is True
+    assert reporting.allows_pending(pending("cdn.example.com", 150.0)) is False
+
+
+def test_a_pending_request_respects_the_per_call_hosts():
+    reporting = ReportingFilter(hosts=("api.example.com",))
+
+    assert reporting.allows_pending(pending("api.example.com", 150.0)) is True
+    assert reporting.allows_pending(pending("other.example.org", 150.0)) is False
+
+
+def test_a_lens_cannot_narrow_a_pending_request():
+    """The structural pin: a Lens is a predicate over Exchanges, and a request still in flight
+    never became one — so there is no Lens call on the pending path, and even a Lens that
+    refuses every Exchange leaves `allows_pending` true."""
+    refuse_everything = ReportingFilter(lens=lambda _exchange: False)
+
+    assert refuse_everything.allows_pending(pending("api.example.com", 150.0)) is True
+    assert refuse_everything.allows(timed(1, 150.0, 160.0)) is False
+
+
+# --- the per-call hosts narrowing ----------------------------------------------
+#
+# `hosts` is the `host_filter` a single call asked for, held on the filter with the same lifetime
+# as the per-call `window`. It intersects with the Scope — a narrowing, never a replacement.
+
+
+def test_the_per_call_hosts_narrow_further_than_the_filter_alone():
+    reporting = ReportingFilter(hosts=("api.example.com",))
+
+    assert reporting.allows(exchange("api.example.com")) is True
+    assert reporting.allows(exchange("cdn.example.com")) is False
+
+
+def test_the_per_call_hosts_intersect_with_a_scope():
+    """Both must admit the host: inside the Scope but outside `hosts` is hidden, exactly as
+    outside the Scope is."""
+    reporting = ReportingFilter(scope=("example.com",), hosts=("api.example.com",))
+
+    assert reporting.allows(exchange("api.example.com")) is True
+    assert reporting.allows(exchange("www.example.com")) is False
+
+
+def test_the_per_call_hosts_never_widen_a_scope():
+    """Asking about one host cannot talk the filter out of the Scope the agent set."""
+    reporting = ReportingFilter(scope=("example.com",), hosts=("other.example.org",))
+
+    assert reporting.allows(exchange("other.example.org")) is False
+
+
+def test_the_per_call_hosts_count_as_narrowing():
+    """Same promise the window makes: a filter that can hide rows has to register in `narrows`,
+    or a caller could drop rows and claim it narrowed nothing."""
+    assert ReportingFilter(hosts=("api.example.com",), include_denied=True).narrows is True

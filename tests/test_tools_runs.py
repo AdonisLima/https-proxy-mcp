@@ -227,6 +227,21 @@ async def test_a_request_still_open_appears_as_pending_with_no_id(recording, sta
     assert timeline["pending"][0]["pending"] is True
 
 
+async def test_a_pending_request_started_after_the_run_ended_is_not_in_its_timeline(
+    recording, state
+):
+    """The pending-versus-window rule, pinned at the tool surface. A request still in flight has
+    no end, so only its start can put it outside the window — and then only past the window's
+    end. Opened after `run_test` returns, this one is entirely after its Run."""
+    await call(recording, "run_test", command="python3 -c ''")
+    open_request(state, key="k", t_start=time.time())
+
+    timeline = await call(recording, "get_timeline", run_id="run-1")
+
+    assert timeline["pending"] == []
+    assert timeline["counts"]["pending"] == 0
+
+
 async def test_a_timeline_can_be_had_with_no_run_at_all(recording, state):
     """Marking Steps by hand must work without `run_test`, or the universal Event Source is not
     universal."""
