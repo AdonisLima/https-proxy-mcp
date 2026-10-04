@@ -93,3 +93,56 @@ def test_dependency_audit_runs_on_linux_not_on_the_ten_x_macos_job():
 
     assert "ubuntu" in job["runs-on"], f"audit lives on {job_name} ({job['runs-on']})"
     assert "macos" not in job["runs-on"]
+
+
+def test_per_test_timeout_fails_a_hang_before_the_job_timeout():
+    """A hung test's only backstop without this is the CI job's ``timeout-minutes: 20`` — on the
+    10x-billed macOS runner, one hang spends ~200 charged minutes against a ~200-minute monthly
+    allowance. The per-test cap converts that into a fast, located failure, so the cap must be
+    present and small relative to the job timeout. 120s is generous against a suite that takes
+    under a minute; the assertion pins the order of magnitude rather than the exact number, so
+    raising the cap for a legitimately slow test does not fail the gate."""
+    timeout = gate_configuration()["pytest"]["ini_options"]["timeout"]
+
+    assert 0 < timeout <= 120
+
+
+class _ItemStub:
+    """Just enough of ``pytest.Item`` for the collection hook: a marker lookup and a mark sink.
+
+    The hook under test is what scopes the larger timeout to the ``machine`` marker, so the
+    assertion has to go through the marker machinery rather than reading a constant off the
+    module and trusting it is ever applied.
+    """
+
+    def __init__(self, machine: bool) -> None:
+        self._machine = machine
+        self.added: list = []
+
+    def get_closest_marker(self, name: str):
+        return object() if self._machine and name == "machine" else None
+
+    def add_marker(self, marker) -> None:
+        self.added.append(marker)
+
+
+def test_machine_marked_tests_get_a_much_larger_cap_through_the_marker():
+    """The machine-gated tests boot real simulators and wait out a 600s flow timeout, so the
+    suite-wide cap would kill them for being what they are. The exemption is pytest-timeout's
+    marker, which outranks the ini value, applied at collection by the conftest hook — and the
+    hook keys on the ``machine`` marker, which stays documentation-only: what keeps these tests
+    from redirecting the machine's networking is the HTTPS_PROXY_MCP_E2E skipif on each module,
+    and nothing here touches it."""
+    import conftest
+
+    machine, plain = _ItemStub(machine=True), _ItemStub(machine=False)
+    conftest.pytest_collection_modifyitems([machine, plain])
+
+    assert plain.added == []
+    [mark] = machine.added
+    assert mark.name == "timeout"
+    assert mark.args[0] == conftest.MACHINE_TEST_TIMEOUT_SECONDS
+    assert (
+        10 * gate_configuration()["pytest"]["ini_options"]["timeout"]
+        <= conftest.MACHINE_TEST_TIMEOUT_SECONDS
+    )

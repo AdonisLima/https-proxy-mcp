@@ -66,12 +66,25 @@ dev = [
     "pre-commit>=4.4.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.16.1",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# A per-test cap, so a hung test fails fast and *located* instead of burning the CI job's whole
+# 20-minute timeout-minutes — on this private repository's 10x-billed macOS runners one hang
+# costs ~200 of the ~200 real macOS minutes in the monthly allowance. 120s is generous: the
+# full suite takes under a minute locally, and the slowest integration tests (building a wheel,
+# installing it under a clean interpreter) finish in seconds. A test that legitimately needs
+# longer gets a larger cap here rather than a narrower behaviour.
+#
+# The machine-gated tests are the exception: they boot real simulators and install real
+# drivers, so tests/conftest.py gives the `machine` marker a much larger cap through
+# pytest-timeout's marker, which outranks this value. Their HTTPS_PROXY_MCP_E2E gate is
+# untouched by any of this.
+timeout = 120
 markers = [
     "integration: binds real sockets or spawns real processes. Deselect with -m 'not integration'.",
     # Gated by HTTPS_PROXY_MCP_E2E=1 rather than by this marker, because a command-line -m
