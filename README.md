@@ -11,7 +11,7 @@ A failing assertion tells you the UI was wrong. It doesn't tell you that `GET /m
 > request you are waiting for arrives. Then run your end-to-end test through `run_test` and ask
 > `get_timeline` why it failed. Builds to a wheel, ships
 > [SKILL.md](./.claude/skills/https-proxy-mcp/SKILL.md), and is not
-> published to PyPI. See [PLAN.md](./PLAN.md).
+> published to PyPI. See [PLAN.md](./docs/PLAN.md).
 
 ## Trying it
 
@@ -111,11 +111,11 @@ different answer from "finished". See [ADR-0004](./docs/adr/0004-overlap-attribu
 | [docs/INSTALL.md](./docs/INSTALL.md) | Installation: requirements, MCP client config, simulator setup, troubleshooting |
 | [docs/USAGE.md](./docs/USAGE.md) | Usage: worked examples with real output, and the full twenty-tool reference |
 | [.claude/skills/https-proxy-mcp/SKILL.md](./.claude/skills/https-proxy-mcp/SKILL.md) | The agent-facing prompt: which three tools matter, and how to read a Timeline |
-| [SPEC.md](./SPEC.md) | The v1 specification — architecture, tool surface, semantics, defaults |
+| [docs/SPEC.md](./docs/SPEC.md) | The v1 specification — architecture, tool surface, semantics, defaults |
 | [CONTEXT.md](./CONTEXT.md) | Domain vocabulary, used precisely throughout the code |
-| [PLAN.md](./PLAN.md) | Six-phase build plan with acceptance criteria |
+| [docs/PLAN.md](./docs/PLAN.md) | Six-phase build plan with acceptance criteria |
 | [docs/v1.1-candidates.md](./docs/v1.1-candidates.md) | Everything deliberately not built, sized and ranked, with a recommended v1.1 scope |
-| [HANDOFF.md](./HANDOFF.md) | Current state, what's next, and the decisions still open |
+| [docs/HANDOFF.md](./docs/HANDOFF.md) | Current state, what's next, and the decisions still open |
 | [AGENTS.md](./AGENTS.md) | Agent guide: how to verify, what not to reopen, and the module map. `CLAUDE.md` is a symlink to it |
 | [docs/adr/](./docs/adr/) | Architectural decisions and why they went the way they did |
 

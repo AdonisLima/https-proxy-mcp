@@ -21,7 +21,7 @@ You do **not** need to install mitmproxy. It is a library dependency, not an ext
 
 `uvx https-proxy-mcp` will not find anything. Every command below therefore points `--from` at a
 path — a checkout or a built wheel. This is a deliberate choice, not an oversight; see
-[HANDOFF.md](../HANDOFF.md).
+[HANDOFF.md](./HANDOFF.md).
 
 ## Install
 

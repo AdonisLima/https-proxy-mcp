@@ -3,7 +3,7 @@
 The phase that delivers the reason the project exists. Everything before it is plumbing:
 P1–P3 can show an agent the traffic, but not *why the test failed*.
 
-Spec: [SPEC.md](../../../SPEC.md) · Plan: [PLAN.md](../../../PLAN.md) · Vocabulary:
+Spec: [SPEC.md](../../SPEC.md) · Plan: [PLAN.md](../../PLAN.md) · Vocabulary:
 [CONTEXT.md](../../../CONTEXT.md) · Decisions: [docs/adr/](../../adr/)
 
 ## What P4 must deliver

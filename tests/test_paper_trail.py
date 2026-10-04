@@ -29,8 +29,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 AGENTS = ROOT / "AGENTS.md"
 CONTEXT = ROOT / "CONTEXT.md"
-SPEC = ROOT / "SPEC.md"
-HANDOFF = ROOT / "HANDOFF.md"
+SPEC = ROOT / "docs" / "SPEC.md"
+HANDOFF = ROOT / "docs" / "HANDOFF.md"
 ADR_DIR = ROOT / "docs" / "adr"
 REVIEWER = ROOT / ".claude" / "agents" / "doc-drift-reviewer.md"
 CANDIDATES = ROOT / "docs" / "v1.1-candidates.md"

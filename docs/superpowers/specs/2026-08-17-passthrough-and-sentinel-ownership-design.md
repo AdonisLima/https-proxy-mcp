@@ -4,7 +4,7 @@ Two defects found by using the tool on a real app, plus the visibility gap that 
 whole debugging session to recognise. Both are in the two places SPEC.md calls safety-critical:
 the machine-wide proxy redirect, and the teardown that undoes it.
 
-Spec: [SPEC.md](../../../SPEC.md) · Vocabulary: [CONTEXT.md](../../../CONTEXT.md) · Decisions:
+Spec: [SPEC.md](../../SPEC.md) · Vocabulary: [CONTEXT.md](../../../CONTEXT.md) · Decisions:
 [docs/adr/](../../adr/) · Field report: `~/https-proxy-leaves-system-proxy-on.md`
 
 ## What this fixes

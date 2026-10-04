@@ -1,9 +1,9 @@
 ---
-description: Refresh HANDOFF.md's state section from reality rather than from memory
+description: Refresh docs/HANDOFF.md's state section from reality rather than from memory
 allowed-tools: Bash(uv run:*), Bash(git:*), Bash(npx harness-score:*)
 ---
 
-Rewrite the parts of `HANDOFF.md` that describe the current state, using measurements you take
+Rewrite the parts of `docs/HANDOFF.md` that describe the current state, using measurements you take
 now. Do not edit the parts that record history or decisions.
 
 Measure first — every number in that file should come from a command you just ran, not from what
@@ -17,7 +17,7 @@ git status --short
 npx harness-score@1.5.1 --quiet --json | head -20
 ```
 
-Then update, in `HANDOFF.md` only:
+Then update, in `docs/HANDOFF.md` only:
 
 - The heading's date and phase summary.
 - **State**: counts, timings, branch, remote, whether the tree is clean.

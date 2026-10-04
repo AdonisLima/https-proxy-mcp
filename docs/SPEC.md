@@ -2,7 +2,7 @@
 
 An MCP server that captures the HTTPS traffic of an app under test and interleaves it with end-to-end test steps, so an agent can diagnose a failure by cause rather than by symptom.
 
-Domain vocabulary is defined in [CONTEXT.md](./CONTEXT.md) and used precisely throughout. Architectural decisions and their rationale live in [docs/adr/](./docs/adr/).
+Domain vocabulary is defined in [CONTEXT.md](../CONTEXT.md) and used precisely throughout. Architectural decisions and their rationale live in [docs/adr/](./adr/).
 
 ## The problem
 
@@ -166,7 +166,7 @@ The asymmetry is deliberate: a simulator trust store is per-device, disposable, 
 
 `search_exchanges` exposes mitmproxy's own filter expression language rather than inventing a query syntax — it is documented, already tested, and already what the capture layer consumes.
 
-`wait_for_exchanges` is what makes E2E usable: *"tap Login, then wait for `POST /auth`"* is one call, not a polling loop. Combined with `tail_exchanges` it covers live observation without any push mechanism. Push is deliberately not attempted — see [ADR-0005](./docs/adr/0005-pull-based-live-access.md).
+`wait_for_exchanges` is what makes E2E usable: *"tap Login, then wait for `POST /auth`"* is one call, not a polling loop. Combined with `tail_exchanges` it covers live observation without any push mechanism. Push is deliberately not attempted — see [ADR-0005](./adr/0005-pull-based-live-access.md).
 
 ### Runs and Timelines
 
@@ -199,7 +199,7 @@ The directory holds unredacted bodies and is therefore `0700` and documented as 
 
 ## Runtime
 
-Python, single process — the MCP server and the mitmproxy addon share one process and one `ExchangeStore`, so the addon holds native flow objects with no IPC and no file round-trip for live queries. See [ADR-0001](./docs/adr/0001-python-monolith.md).
+Python, single process — the MCP server and the mitmproxy addon share one process and one `ExchangeStore`, so the addon holds native flow objects with no IPC and no file round-trip for live queries. See [ADR-0001](./adr/0001-python-monolith.md).
 
 - Python ≥ 3.12, managed by `uv` (system Python is 3.9.6 and too old). Verify the floor against the resolved mitmproxy version at scaffold time.
 - `mitmproxy` as a library dependency, not an external binary.

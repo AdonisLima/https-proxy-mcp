@@ -1,6 +1,6 @@
 # Handoff — 2026-08-17 (v1 feature-complete; Passthrough and sentinel ownership landed)
 
-Picking this up in a fresh session. Start with [AGENTS.md](./AGENTS.md) — it is loaded
+Picking this up in a fresh session. Start with [AGENTS.md](../AGENTS.md) — it is loaded
 automatically and says where everything is. This file is current state and open decisions only.
 
 ## What moved out of this file
@@ -10,14 +10,14 @@ now live where they are actually needed, and this file no longer repeats them:
 
 | Was here | Now |
 |---|---|
-| Read these first, in this order | [AGENTS.md](./AGENTS.md) |
-| What exists now (the module map) | [AGENTS.md](./AGENTS.md) |
-| Decisions already made — do not reopen | [AGENTS.md](./AGENTS.md) |
+| Read these first, in this order | [AGENTS.md](../AGENTS.md) |
+| What exists now (the module map) | [AGENTS.md](../AGENTS.md) |
+| Decisions already made — do not reopen | [AGENTS.md](../AGENTS.md) |
 | Traps discovered the hard way | the `CLAUDE.md` beside each module — `capture/`, `targets/`, `eventsources/`, `runs/`, `server/`, `tests/` |
-| Manual recovery | [.claude/skills/live-machine-tests/](./.claude/skills/live-machine-tests/SKILL.md) |
-| How the previous sessions worked | [.claude/skills/verification-discipline/](./.claude/skills/verification-discipline/SKILL.md) |
+| Manual recovery | [.claude/skills/live-machine-tests/](../.claude/skills/live-machine-tests/SKILL.md) |
+| How the previous sessions worked | [.claude/skills/verification-discipline/](../.claude/skills/verification-discipline/SKILL.md) |
 
-The reasoning is in [ADR-0006](./docs/adr/0006-traps-live-beside-their-modules.md). The short
+The reasoning is in [ADR-0006](./adr/0006-traps-live-beside-their-modules.md). The short
 version: a trap about `networksetup` is worth having when you are editing `systemproxy.py`, and
 worth nothing at the bottom of a file nobody opens. `AGENTS.md` is loaded on every request;
 `CLAUDE.md` at the root is a symlink to it, which is how Claude Code reads it.
@@ -31,7 +31,7 @@ questions, and the decisions that are the user's to make.
 `https://github.com/AdonisLima/https-proxy-mcp.git` (private).
 
 Verify, or just run `/verify`. The suite's current size is stated in
-[AGENTS.md](./AGENTS.md#verify) and nowhere else, because two copies of one number is how one of
+[AGENTS.md](../AGENTS.md#verify) and nowhere else, because two copies of one number is how one of
 them goes stale:
 
 ```bash
@@ -47,13 +47,13 @@ v1 is feature-complete. What remains is not a phase: it is **publication** (a de
 `passthrough-and-sentinel-ownership` branch, together with the visibility gap that made them cost a
 whole debugging session to recognise. Both were in the two places SPEC.md calls safety-critical.
 
-- **Passthrough** ([ADR-0007](./docs/adr/0007-passthrough-scoped-interception.md)). A `scope` now
+- **Passthrough** ([ADR-0007](./adr/0007-passthrough-scoped-interception.md)). A `scope` now
   also decides which hosts get decrypted, so a scoped Session stops serving `mitmproxy`-signed
   certificates to the developer's browser and to every other simulator on the machine.
   `start_capture` gains `passthrough: bool = True`, inert with no `scope`, and reports which way it
   went. New module: `capture/hostsets.py`.
 - **The sentinel names its owner**
-  ([ADR-0008](./docs/adr/0008-the-sentinel-names-its-owner.md)). Every editor window runs its own
+  ([ADR-0008](./adr/0008-the-sentinel-names-its-owner.md)). Every editor window runs its own
   server against one shared record of the machine's prior proxy settings, and three call sites acted
   on any record they found. They now branch on ownership: a live foreign owner is refused, left
   alone and reported. `diagnose_capture` gains a sixth verdict, `proxy_held_elsewhere`, and
@@ -202,7 +202,7 @@ the non-negotiable says look before deleting and what to do with them is the use
 `proxy-state.json`, so the machine is not currently proxied.
 
 The 3 skipped are the live machine tests. They are the only things in the project that change the developer's machine, so they are gated — the runbook is `/live-e2e`, or
-[.claude/skills/live-machine-tests/](./.claude/skills/live-machine-tests/SKILL.md):
+[.claude/skills/live-machine-tests/](../.claude/skills/live-machine-tests/SKILL.md):
 
 ```bash
 HTTPS_PROXY_MCP_E2E=1 uv run pytest tests/test_simulator_e2e.py tests/test_maestro_e2e.py -q
@@ -234,7 +234,7 @@ Already done and verified locally, by `tests/test_distribution.py`:
 
 Not done, and only a package index can do it: that the name resolves, that the long description renders, that `uvx https-proxy-mcp` with no `--from` finds anything. If publication ever happens, TestPyPI first — the local suite cannot tell you a description failed to render.
 
-**v1.1 is the other direction**, and it now has its own document: **[docs/v1.1-candidates.md](./docs/v1.1-candidates.md)** collects every deferral, open question and ADR consequence from the five files they were scattered across, sizes each one, and recommends a scope. Start there rather than re-deriving the list.
+**v1.1 is the other direction**, and it now has its own document: **[docs/v1.1-candidates.md](./v1.1-candidates.md)** collects every deferral, open question and ADR consequence from the five files they were scattered across, sizes each one, and recommends a scope. Start there rather than re-deriving the list.
 
 Its short version: ship the three cheap additions first (a tool for the pending registry, reading Runs back from disk, `json_path`), then write/interception tools behind the flag, and run `--mode local` as a one-day **probe** rather than a feature — the answer to open question 1 changes what `diagnose_capture` can promise. Android is the biggest capability and the biggest risk, and SPEC.md's assessment that its system-CA procedure is the most brittle part of the domain has not been revisited; it deserves its own release.
 
@@ -275,7 +275,7 @@ The same probe found that one failing command carries **33 KB of `error.hierarch
 
 ## Deliberately not built yet
 
-**[docs/v1.1-candidates.md](./docs/v1.1-candidates.md).** Every item that used to be listed here
+**[docs/v1.1-candidates.md](./v1.1-candidates.md).** Every item that used to be listed here
 is there, sized and ranked, with a recommended scope — `json_path` (§9), WebSocket message
 capture (§6), reading Runs back from disk (§8), Android, write tools and `--mode local`
 (§1–§3), and the `simplify` pass, publication and the `SKILL.md` reverse check under §10
@@ -286,7 +286,7 @@ the maintained one; this section is a pointer and nothing else.
 
 ## Open questions
 
-1. Can `--mode local:<spec>` scope to the app process inside CoreSimulator? Still v1.1, and it now buys **less** than it did: ADR-0007 delivered the certificate half without it, so what remains is pinning attribution on an unscoped Session, plain HTTP, and the availability blast radius. Sized again in [docs/v1.1-candidates.md §3](./docs/v1.1-candidates.md) rather than here.
+1. Can `--mode local:<spec>` scope to the app process inside CoreSimulator? Still v1.1, and it now buys **less** than it did: ADR-0007 delivered the certificate half without it, so what remains is pinning attribution on an unscoped Session, plain HTTP, and the availability blast radius. Sized again in [docs/v1.1-candidates.md §3](./v1.1-candidates.md) rather than here.
 2. ~~How should WebSocket and long-lived streaming connections appear in an interval model?~~ **Answered by P4:** classed long-lived on `101` or `text/event-stream`, owned once by the Step that opened them, never repeated as an Overlap.
 3. Do Detox / Appium / Playwright / XCUITest expose per-Step timings rich enough for the `Step` contract, or do they need explicit marks? Less pressing now: `start_step`/`end_step` covers any of them without an adapter, so this is an enrichment question rather than a blocking one.
 4. ~~Does `simctl keychain` require a booted simulator?~~ **Answered: yes.** See `src/https_proxy_mcp/targets/CLAUDE.md`.

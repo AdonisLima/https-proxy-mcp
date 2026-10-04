@@ -2,7 +2,7 @@
 
 Six phases. Each has an acceptance criterion you can actually check, and each leaves the tool more useful than the last. Phases 1–2 need no mobile tooling at all, which is deliberate: the core is testable against `curl` before any simulator is involved.
 
-Spec: [SPEC.md](./SPEC.md) · Vocabulary: [CONTEXT.md](./CONTEXT.md) · Decisions: [docs/adr/](./docs/adr/)
+Spec: [SPEC.md](./SPEC.md) · Vocabulary: [CONTEXT.md](../CONTEXT.md) · Decisions: [docs/adr/](./adr/)
 
 ## P0 — Scaffold
 
@@ -94,7 +94,7 @@ Packaging is executed rather than asserted, in `tests/test_distribution.py`: `uv
 
 **Later:** physical devices via WireGuard mode; browser targets; further Event Sources (Detox, Appium, Playwright, XCUITest); MCP notification-based push if client support becomes dependable.
 
-All of the above, plus the deferrals and open questions recorded elsewhere, are collected, sized and ranked in **[docs/v1.1-candidates.md](./docs/v1.1-candidates.md)** — which also recommends a scope. This section stays as the record of what v1 decided to defer; the candidates document is where the thinking about it lives.
+All of the above, plus the deferrals and open questions recorded elsewhere, are collected, sized and ranked in **[docs/v1.1-candidates.md](./v1.1-candidates.md)** — which also recommends a scope. This section stays as the record of what v1 decided to defer; the candidates document is where the thinking about it lives.
 
 ## Open questions
 

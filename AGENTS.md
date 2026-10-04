@@ -4,7 +4,7 @@ An MCP server that captures an app's HTTPS traffic and interleaves it with the s
 end-to-end test, so a failure can be diagnosed by cause rather than by symptom. macOS only:
 capture routes traffic with `networksetup` and installs trust with `simctl`.
 
-v1 is feature-complete. What remains is publication (the user's decision, see HANDOFF.md) and
+v1 is feature-complete. What remains is publication (the user's decision, see docs/HANDOFF.md) and
 v1.1 (docs/v1.1-candidates.md).
 
 Two defects found by using the tool on a real app have been fixed since v1: a Scope now narrows what
@@ -40,8 +40,8 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
 2. **[docs/USAGE.md](./docs/USAGE.md)** and **[docs/INSTALL.md](./docs/INSTALL.md)** — the human
    guides. USAGE.md is the **accurate** tool reference: its signatures are checked against the
    live schemas by a test, which SPEC.md's table is not.
-3. **[SPEC.md](./SPEC.md)** — the v1 spec. A record of *intent*; its tool table has drifted.
-4. **[PLAN.md](./PLAN.md)** — six phases with acceptance criteria, all six met.
+3. **[docs/SPEC.md](./docs/SPEC.md)** — the v1 spec. A record of *intent*; its tool table has drifted.
+4. **[docs/PLAN.md](./docs/PLAN.md)** — six phases with acceptance criteria, all six met.
 5. **[docs/adr/](./docs/adr/)** — nine decisions and why. Two deviate from the research that
    preceded the project, two more make a Scope narrow what is *captured*, and the last adds a
    fourth reporting narrowing, so read them before "fixing" anything that looks wrong.
@@ -49,7 +49,7 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
    — P4's design: the four probe findings that shaped it, and the Correlator's rules stated
    precisely. The summaries elsewhere carry the findings; this carries the reasoning, which is
    what you check a summary against when overlap attribution looks wrong.
-7. **[HANDOFF.md](./HANDOFF.md)** — current state, what is deliberately not built, open
+7. **[docs/HANDOFF.md](./docs/HANDOFF.md)** — current state, what is deliberately not built, open
    questions, and the decisions that belong to the user.
 
 ## Non-negotiables
