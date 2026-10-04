@@ -79,16 +79,25 @@ markers = [
     # silently opted back in to redirecting the machine's networking.
     "machine: changes the developer's real system proxy. Requires HTTPS_PROXY_MCP_E2E=1.",
 ]
-# mitmproxy calls deprecated pyparsing and pyasn1 APIs, and there is nothing to fix on this
-# side of the dependency. Narrowed to deprecations so every other warning category — ours
-# included — still reaches the report.
+# Warnings fail the run: a warning that only reaches a report is a warning nobody reads, so the
+# default is `error` and every exception is argued for individually. pytest applies these filters
+# in order and later entries win, so the narrowing must follow the `error`, never precede it.
+#
+# The one exception is mitmproxy calling deprecated pyparsing and pyasn1 APIs — there is nothing
+# to fix on this side of the dependency, and the category is narrowed to deprecations so every
+# other warning ours or theirs still fails loudly.
 filterwarnings = [
+    "error",
     "ignore:.*deprecated.*:DeprecationWarning",
 ]
 
 [tool.mypy]
 strict = true
 files = ["src"]
+# Dead code that only exists on paper — a branch after a return, a condition that cannot hold —
+# is usually a sign the author was wrong about the types. Strict mode does not flag it on its
+# own; without this, `mypy --strict` is green over code it never looked at.
+warn_unreachable = true
 # `tests/` is deliberately out of scope. Under --strict it reports ~870 findings, almost all of
 # them a missing `-> None` on a test function, and a mechanical edit across 41 files would bury
 # anything real in the same diff — the objection this project already applies to `ruff format`.

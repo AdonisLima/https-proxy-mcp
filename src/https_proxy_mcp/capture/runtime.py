@@ -80,6 +80,42 @@ def _free_loopback_port() -> int:
         return int(probe.getsockname()[1])
 
 
+def _bind_web_sockets(port: int, host: str) -> list[socket.socket]:
+    """tornado's bind loop, with the leak on its failure path closed.
+
+    ``TCPServer.listen`` delegates to ``bind_sockets``, and a refused bind there — the port is
+    already taken, which a Human View start is *expected* to survive — re-raises without closing
+    the socket it had just opened, nor any it had already bound. That is one leaked fd per failed
+    start, collected whenever the allocator feels like it, so pytest's error-first warning policy
+    would report it against whatever innocent test happened to be running. Bound here instead, so
+    the failure path closes what it opened.
+    """
+    sockets: list[socket.socket] = []
+    try:
+        seen: set[tuple[int, tuple[object, ...]]] = set()
+        for family, socktype, proto, _, sockaddr in socket.getaddrinfo(
+            host, port, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE
+        ):
+            if (family, sockaddr) in seen:
+                continue
+            seen.add((family, sockaddr))
+            sock = socket.socket(family, socktype, proto)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.setblocking(False)
+                sock.bind(sockaddr)
+                sock.listen()
+            except BaseException:
+                sock.close()
+                raise
+            sockets.append(sock)
+    except BaseException:
+        for bound in sockets:
+            bound.close()
+        raise
+    return sockets
+
+
 class _WebProxyMaster(WebMaster):
     """A WebMaster that keeps the reference mitmproxy drops, so the web server can be stopped.
 
@@ -87,7 +123,9 @@ class _WebProxyMaster(WebMaster):
     it — in ``mitmweb`` the process exits first. A Session ends without this process ending, so
     the server is kept on the instance and ``stop_web()`` closes it. The body below mirrors the
     pinned master's, ending at the grandparent's ``running()``: awaiting
-    ``WebMaster.running()`` would listen twice.
+    ``WebMaster.running()`` would listen twice. The listen itself goes through
+    :func:`_bind_web_sockets`, because tornado's own bind loop leaks the socket when the bind is
+    refused.
     """
 
     def __init__(self, opts: Options) -> None:
@@ -98,7 +136,9 @@ class _WebProxyMaster(WebMaster):
         tornado.ioloop.IOLoop.current()
         self._http_server = tornado.httpserver.HTTPServer(self.app, max_buffer_size=2**32)  # 4GB
         try:
-            self._http_server.listen(self.options.web_port, self.options.web_host)
+            self._http_server.add_sockets(
+                _bind_web_sockets(self.options.web_port, self.options.web_host)
+            )
         except OSError as e:
             # The proxy servers are already bound at this point (Master.run sets them up
             # before running()), and proxyserver only answers a mode change once its

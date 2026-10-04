@@ -107,6 +107,13 @@ def start_child(tmp_path) -> subprocess.Popen:
     while time.monotonic() < deadline:
         line = child.stdout.readline()
         if line.strip() == "redirected":
+            # The child prints nothing more, so these ends are never read again — and an unclosed
+            # pipe is collected whenever the allocator feels like it, which pytest then reports
+            # against whatever test happens to be running. A passed test failing its neighbour is
+            # how a suite stops being believed.
+            child.stdout.close()
+            assert child.stderr is not None
+            child.stderr.close()
             return child
         if child.poll() is not None:
             raise AssertionError(f"child died early: {child.stderr.read() if child.stderr else ''}")
