@@ -12,7 +12,7 @@ from https_proxy_mcp.serialize.views import (
     curl_command,
     exchange_detail,
     exchange_summary,
-    paginate,
+    page_after,
 )
 
 __all__ = [
@@ -22,7 +22,7 @@ __all__ = [
     "digest",
     "exchange_detail",
     "exchange_summary",
-    "paginate",
+    "page_after",
     "redact_body",
     "redact_headers",
 ]

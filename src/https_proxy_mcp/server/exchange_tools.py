@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -31,7 +32,7 @@ from https_proxy_mcp.serialize.views import (
     curl_command,
     exchange_detail,
     exchange_summary,
-    paginate,
+    page_after,
 )
 from https_proxy_mcp.server.state import CaptureState
 
@@ -179,29 +180,26 @@ def register_exchange_tools(server: FastMCP, state: CaptureState) -> None:
 
         Narrowed by the denylist and the Session's Scope, like ``list_exchanges``.
         """
-        after = _parse_cursor(cursor)
         matches = _matcher(state, filter or "")
-        fresh = [item for item in state.store if item.id > after and matches(item)]
-        # Narrowed like every other listing, or the denylist would be defeated by reaching for
-        # the other browse tool.
-        fresh, hidden = state.reporting(include_denied=include_denied).apply(fresh)
-        # Clamped like every other listing. This is the one that did not reach `paginate` and so
-        # did not inherit its ceiling, which made "flooding is impossible, not discouraged" false
-        # by asking for the other browse tool — the same bypass shape the denylist narrowing above
-        # exists to close.
-        capped = max(1, min(limit, MAX_PAGE_SIZE))
-        page = fresh[:capped]
-        store = state.store
+        listing = _listing(
+            state,
+            [item for item in state.store if matches(item)],
+            # The one divergence, kept: a listing refuses a nonsense limit, a tail clamps it.
+            limit=max(1, limit),
+            cursor=cursor,
+            include_denied=include_denied,
+        )
 
         return {
-            "exchanges": [exchange_summary(item) for item in page],
-            "returned": len(page),
-            "hidden": hidden,
-            "limit": capped,
-            "next_cursor": str(page[-1].id) if page else cursor,
-            "more_available": len(page) < len(fresh),
-            "evicted": store.evicted_count,
-            "recorded": store.recorded_count,
+            "exchanges": [exchange_summary(item) for item in listing.page],
+            "returned": len(listing.page),
+            # The tail's own population: only rows the cursor's owner has not seen count.
+            "hidden": listing.hidden_fresh,
+            "limit": listing.limit,
+            "next_cursor": str(listing.page[-1].id) if listing.page else cursor,
+            "more_available": len(listing.page) < listing.available,
+            "evicted": listing.evicted,
+            "recorded": listing.recorded,
         }
 
     @server.tool()
@@ -315,6 +313,67 @@ def _narrow(
     return exchanges
 
 
+@dataclass(frozen=True, slots=True)
+class _Listing:
+    """What every browse tool computes the same way: the page, and the counts around it.
+
+    ``hidden`` and ``hidden_fresh`` are deliberately both here, because they are two
+    populations and each browse tool owes its caller a different one. A listing counts the
+    whole matching set — rows before the cursor were matched and hidden too, and dropping them
+    from the count would read as "there was no older traffic". A tail counts only rows from the
+    cursor onward, because rows before it are ones the caller has already been offered.
+    Neither is derivable from the other, so the core computes both and each wrapper reports
+    its own.
+    """
+
+    page: list[Exchange]
+    available: int
+    matched: int
+    hidden: int
+    hidden_fresh: int
+    limit: int
+    evicted: int
+    recorded: int
+
+
+def _listing(
+    state: CaptureState,
+    exchanges: list[Exchange],
+    *,
+    limit: int,
+    cursor: str | None,
+    include_denied: bool = False,
+) -> _Listing:
+    """The one pipeline every browse tool goes through: parse, narrow, clamp, page, count.
+
+    This directory's trap file records what happens when a browse tool assembles this inline
+    instead: the limit ceiling and the denylist narrowing were each bypassed exactly once,
+    both times by the one tool that did not share the pipeline. A future browse tool goes
+    through here, or the invariant is maintained by hand again.
+
+    The reporting narrowing — Run window, denylist, Scope, Lens — comes from
+    :meth:`CaptureState.reporting`, so ``include_denied`` and the Session's Lens behave exactly
+    as they do for every other caller. A bad cursor raises :class:`ToolError` here; a nonsense
+    ``limit`` raises ``ValueError`` out of :func:`page_after`, and whether that becomes a
+    refusal or a clamp is the wrapper's own policy.
+    """
+    after = _parse_cursor(cursor)
+    reported, hidden = state.reporting(include_denied=include_denied).apply(exchanges)
+    page, available = page_after(reported, limit=limit, after=after)
+    fresh = sum(1 for item in exchanges if item.id > after)
+    store = state.store
+    return _Listing(
+        page=page,
+        available=available,
+        matched=len(reported),
+        hidden=hidden,
+        hidden_fresh=fresh - available,
+        limit=min(limit, MAX_PAGE_SIZE),
+        evicted=store.evicted_count,
+        recorded=store.recorded_count,
+    )
+
+
 def _page(
     state: CaptureState,
     exchanges: list[Exchange],
@@ -326,27 +385,28 @@ def _page(
 ) -> dict[str, Any]:
     """One page of summaries, with the counts every listing owes its caller.
 
-    Reporting is narrowed here rather than in each tool, so a new listing cannot forget to do
-    it — and ``hidden`` is always reported, because a listing that quietly removes rows reads
-    as "there was no traffic".
+    A thin wrapper over :func:`_listing` — what stays here is what is a listing's alone: the
+    full-set ``hidden``, ``matched``, the policy that the end of a listing offers no cursor,
+    and the refusal of a nonsense ``limit`` where a tail would clamp.
     """
-    reported, hidden = state.reporting(include_denied=include_denied).apply(exchanges)
-
     try:
-        page, next_cursor = paginate(reported, limit=limit, cursor=cursor)
+        listing = _listing(
+            state, exchanges, limit=limit, cursor=cursor, include_denied=include_denied
+        )
     except ValueError as exc:
         raise ToolError(str(exc)) from None
 
-    store = state.store
     return {
-        "exchanges": [exchange_summary(item) for item in page],
-        "returned": len(page),
-        "matched": len(reported),
-        "hidden": hidden,
-        "limit": min(limit, MAX_PAGE_SIZE),
-        "next_cursor": next_cursor,
-        "evicted": store.evicted_count,
-        "recorded": store.recorded_count,
+        "exchanges": [exchange_summary(item) for item in listing.page],
+        "returned": len(listing.page),
+        "matched": listing.matched,
+        "hidden": listing.hidden,
+        "limit": listing.limit,
+        "next_cursor": str(listing.page[-1].id)
+        if listing.page and len(listing.page) < listing.available
+        else None,
+        "evicted": listing.evicted,
+        "recorded": listing.recorded,
         **extra,
     }
 

@@ -26,7 +26,7 @@ from https_proxy_mcp.serialize.views import (
     curl_command,
     exchange_detail,
     exchange_summary,
-    paginate,
+    page_after,
 )
 
 TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
@@ -269,44 +269,37 @@ def test_a_split_multibyte_character_does_not_break_a_slice():
 def test_a_page_returns_at_most_the_limit():
     items = [exchange(id=n) for n in range(1, 11)]
 
-    page, _ = paginate(items, limit=3)
+    page, _ = page_after(items, limit=3)
 
     assert [item.id for item in page] == [1, 2, 3]
 
 
-def test_a_page_offers_a_cursor_when_more_remains():
+def test_available_counts_every_row_past_the_marker():
     items = [exchange(id=n) for n in range(1, 11)]
 
-    _, cursor = paginate(items, limit=3)
-
-    assert cursor == "3"
-
-
-def test_the_last_page_offers_no_cursor():
-    items = [exchange(id=n) for n in range(1, 4)]
-
-    _, cursor = paginate(items, limit=3)
-
-    assert cursor is None
-
-
-def test_a_cursor_resumes_after_the_item_it_names():
-    items = [exchange(id=n) for n in range(1, 11)]
-
-    page, _ = paginate(items, limit=3, cursor="3")
+    page, available = page_after(items, limit=3, after=3)
 
     assert [item.id for item in page] == [4, 5, 6]
+    assert available == 7
+
+
+def test_available_is_not_capped_by_the_page():
+    """The count is how the caller tells "the end" from "more remains"."""
+    items = [exchange(id=n) for n in range(1, 11)]
+
+    _, available = page_after(items, limit=3)
+
+    assert available == 10
 
 
 def test_paging_through_everything_yields_each_item_once():
     items = [exchange(id=n) for n in range(1, 11)]
-    seen, cursor = [], None
+    seen, after = [], 0
 
-    while True:
-        page, cursor = paginate(items, limit=4, cursor=cursor)
+    while after < items[-1].id:
+        page, _ = page_after(items, limit=4, after=after)
         seen.extend(item.id for item in page)
-        if cursor is None:
-            break
+        after = page[-1].id
 
     assert seen == list(range(1, 11))
 
@@ -314,23 +307,18 @@ def test_paging_through_everything_yields_each_item_once():
 def test_an_oversized_limit_is_clamped():
     items = [exchange(id=n) for n in range(1, 500)]
 
-    page, _ = paginate(items, limit=10_000)
+    page, _ = page_after(items, limit=10_000)
 
     assert len(page) == MAX_PAGE_SIZE
 
 
 def test_a_nonsense_limit_is_rejected():
-    with pytest.raises(ValueError, match="limit"):
-        paginate([], limit=0)
+    with pytest.raises(ValueError, match="limit must be at least 1"):
+        page_after([], limit=0)
 
 
-def test_a_nonsense_cursor_is_rejected():
-    with pytest.raises(ValueError, match="cursor"):
-        paginate([], limit=10, cursor="not-a-cursor")
-
-
-def test_an_empty_page_offers_no_cursor():
-    assert paginate([], limit=10) == ([], None)
+def test_an_empty_listing_pages_to_nothing():
+    assert page_after([], limit=10) == ([], 0)
 
 
 # --- curl export --------------------------------------------------------------

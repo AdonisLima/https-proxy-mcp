@@ -23,11 +23,15 @@ not look like breakage.
   that wrote all four messages at once got no response to the `start_capture` in the middle — the
   shutdown raced the response write. Not a defect; with realistic pacing all three arrive. It
   reads exactly like a dropped-response bug, so pace a probe before diagnosing one.
-- **Every browse tool must clamp its page size.** `tail_exchanges` honoured any `limit` up to the
-  whole ring buffer while `list_exchanges` and `search_exchanges` went through `paginate`, which
-  clamps to `MAX_PAGE_SIZE`. SPEC.md's claim is that flooding the context is *impossible* rather
-  than discouraged, so that was a hole in exactly that guarantee, reachable by asking for the
-  other browse tool. Found by writing the guide, not by reading the code.
+- **Every browse tool goes through `_listing`.** The narrow → clamp → counts invariant has failed
+  twice in exactly the bypassed shape, both times in the one browse tool that assembled its
+  listing inline: `tail_exchanges` honoured any `limit` up to the whole ring buffer while the
+  listings clamped to `MAX_PAGE_SIZE`, and before that it skipped the denylist narrowing the
+  listings applied. SPEC.md's claim is that flooding the context is *impossible* rather than
+  discouraged, so each was a hole in exactly that guarantee, reachable by asking for the other
+  browse tool. The ceiling itself lives in `page_after` in the serialize layer; the clamp and
+  both `hidden` populations live in `_listing`. Found by writing the guide, not by reading the
+  code.
 - **`list_exchanges` must never be able to return bodies.** There is no parameter that would do
   it, deliberately — that is the API enforcing what guidance cannot.
 - **FastMCP wraps *any* exception a tool raises into a `ToolError`.** So

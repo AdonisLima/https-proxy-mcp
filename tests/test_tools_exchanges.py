@@ -314,13 +314,15 @@ async def test_tailing_from_no_cursor_returns_what_is_there(server, recording):
 
 
 async def test_an_oversized_tail_is_clamped_like_every_other_listing(server, recording):
-    """The one listing that did not go through `paginate`, and so did not inherit its ceiling.
+    """The clamp is structural now: every browse tool goes through the same listing pipeline.
 
-    SPEC.md's claim is that flooding the context is *impossible* rather than discouraged, and a
-    tail that honoured `limit=10_000` was a hole in exactly that — reachable by asking for the
-    other browse tool, which is the same shape as the denylist bypass `tail_exchanges` already
-    guards against. Found while writing the usage guide's reference table, because documenting the
-    200-row cap meant checking that it applied everywhere it was claimed.
+    It was not always. `tail_exchanges` once assembled its listing inline, did not reach the
+    shared pager, and so did not inherit its ceiling. SPEC.md's claim is that flooding the
+    context is *impossible* rather than discouraged, and a tail that honoured `limit=10_000`
+    was a hole in exactly that — reachable by asking for the other browse tool, which is the
+    same shape as the denylist bypass the inline assembly had already caused once. Found while
+    writing the usage guide's reference table, because documenting the 200-row cap meant
+    checking that it applied everywhere it was claimed.
     """
     for index in range(205):
         recording.store.record(captured(path=f"/{index}"))
@@ -330,6 +332,30 @@ async def test_an_oversized_tail_is_clamped_like_every_other_listing(server, rec
     assert result["returned"] == 200
     assert result["limit"] == 200
     assert result["more_available"] is True
+
+
+async def test_both_browse_tools_agree_on_limit_and_hidden(server, recording):
+    """The invariant the shared pipeline exists to keep: asked the same uncursored question,
+    no browse tool may clamp differently or count what it hid differently."""
+    recording.store.record(captured(host="api.example.com"))
+    recording.store.record(captured(host="ocsp.digicert.com"))
+    recording.store.record(captured(host="configuration.apple.com"))
+
+    listing = await call(server, "list_exchanges", limit=10_000)
+    tail = await call(server, "tail_exchanges", limit=10_000)
+
+    assert listing["limit"] == tail["limit"] == 200
+    assert listing["hidden"] == tail["hidden"] == 2
+
+
+@pytest.mark.parametrize("tool", ["list_exchanges", "tail_exchanges"])
+async def test_a_garbage_cursor_is_rejected_by_every_browse_tool(server, recording, tool):
+    """One parser at the tool surface, so cursor behaviour cannot diverge between browse
+    tools — and the message names the remedy, not just the type."""
+    recording.store.record(captured())
+
+    with pytest.raises(ToolError, match="cursor must come from a previous response"):
+        await server.call_tool(tool, {"cursor": "not-a-cursor"})
 
 
 async def test_tailing_returns_only_what_is_new(server, recording):

@@ -1,7 +1,11 @@
 """Shaping Exchanges for a model: summaries, previews, slices, pagination, curl.
 
 Does no I/O. Bodies arrive as bytes, because the store owns the spill layout and this module
-owns representation; keeping the two apart is what makes both testable alone.
+owns representation; keeping the two apart is what makes both testable alone. Pagination is
+pure arithmetic over Exchange ids — a page and a count of what remains past a marker, with no
+cursor-string knowledge. What a cursor *is*, what a caller is told at the end of a listing,
+and whether a nonsense limit is refused or clamped are tool-surface policies, and they live at
+the tool surface.
 
 Two invariants hold throughout, and both are structural rather than advisory:
 
@@ -193,34 +197,23 @@ def body_slice(
 # --- pagination ---------------------------------------------------------------
 
 
-def paginate(
-    exchanges: Sequence[Exchange], *, limit: int = DEFAULT_PAGE_SIZE, cursor: str | None = None
-) -> tuple[list[Exchange], str | None]:
-    """One page of Exchanges, plus the cursor for the next one.
+def page_after(
+    exchanges: Sequence[Exchange], *, limit: int = DEFAULT_PAGE_SIZE, after: int = 0
+) -> tuple[list[Exchange], int]:
+    """One page of Exchanges, plus how many rows sit past ``after`` at all.
 
-    The cursor is the last Exchange id of the page. Ids are monotonic, so resuming is
-    "everything after this id" — no offset to go stale as the ring buffer evicts underneath
-    a paging agent.
+    Ids are monotonic, so resuming is "everything after this id" — no offset to go stale as
+    the ring buffer evicts underneath a paging agent. ``available`` counts every row past
+    ``after``, paged or not, so the caller can tell "that was the end" from "more remains"
+    without a second call. Where ``after`` comes from and what the caller does with the count
+    are the caller's policies, not this function's.
     """
     if limit < 1:
         raise ValueError(f"limit must be at least 1, got {limit}")
     limit = min(limit, MAX_PAGE_SIZE)
 
-    after = _parse_cursor(cursor)
     remaining = [exchange for exchange in exchanges if exchange.id > after]
-    page = remaining[:limit]
-
-    has_more = len(page) < len(remaining)
-    return page, str(page[-1].id) if page and has_more else None
-
-
-def _parse_cursor(cursor: str | None) -> int:
-    if cursor is None:
-        return 0
-    try:
-        return int(cursor)
-    except ValueError:
-        raise ValueError(f"cursor must come from a previous page, got {cursor!r}") from None
+    return remaining[:limit], len(remaining)
 
 
 # --- curl export --------------------------------------------------------------

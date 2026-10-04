@@ -13,7 +13,7 @@ This matters more than anything else you will do here, because the obvious "fix"
 
 - **`docs/USAGE.md` is the accurate tool reference.** Its signatures are checked against the live
   schemas by a test. If USAGE.md and the code disagree, that is a real finding.
-- **`SPEC.md` is a record of *intent*, and it has already drifted from the code in ten known
+- **`SPEC.md` is a record of *intent*, and it has already drifted from the code in eleven known
   places.** **Do not report these, and never propose "fixing" SPEC.md to match the code.** It is
   the v1 specification and a historical document. Only report a SPEC.md discrepancy if it is a
   *new* one, not on this list:
@@ -41,6 +41,10 @@ This matters more than anything else you will do here, because the obvious "fix"
       `wait_for_exchanges`, which SPEC.md describes as exempt from the narrowings, obeys the Lens
       while remaining exempt from the denylist and the Scope. `get_exchange` is exempt from all
       four. See ADR-0009 for why the exemption is kept in one place and reversed in the other.
+  11. Pagination in the serialize layer is `page_after(exchanges, *, limit, after) -> (page,
+      available)`, not the `paginate` named in SPEC.md's diagram. Cursor-string handling left
+      the serialize layer entirely and lives at the tool surface, in the one parser every
+      browse tool shares; the `limit < 1` raise and its message are unchanged.
 - **`PLAN.md`** records what was verified at each phase. Historical. Do not update it.
 - **`SKILL.md` must contain no relative links into this repository.** It is copied standalone to
   `~/.claude/skills/https-proxy-mcp/SKILL.md`. A relative link is a defect; report it.
@@ -63,8 +67,8 @@ Every number, limit and guarantee in prose is a claim you can execute:
 - A stated maximum ("50 per page", "64 KB", "2 KB", "10 most recent", "5000") → find the
   constant, and check **every** path that should honour it. This is exactly how the
   `tail_exchanges` page-size hole was found: `list_exchanges` and `search_exchanges` clamped
-  through `paginate` and the tail sliced directly, so the guarantee held in two places out of
-  three.
+  through the shared pager and the tail sliced directly, so the guarantee held in two places
+  out of three.
 - A tool signature → check the registered tool, not the docstring.
 - A shell command shown to a reader → check it would actually run. The README's quick-start
   command was documented for three phases and had never worked: `curl` through the proxy to an

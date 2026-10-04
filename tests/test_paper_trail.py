@@ -45,7 +45,16 @@ EXCHANGE_TOOLS = ROOT / "src" / "https_proxy_mcp" / "server" / "exchange_tools.p
 #: Counts are written as words in this project's prose, so a test that couples a number to the
 #: thing it counts has to spell it. Deliberately small: a range that needs extending is a signal
 #: worth stopping on rather than a gap to paper over.
-NUMBER_WORDS = {4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
+NUMBER_WORDS = {
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
+    11: "eleven",
+}
 
 #: The claim Passthrough falsified, in the three forms this repository wrote it in.
 UNCONDITIONAL = (

@@ -58,9 +58,9 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
   versus Maestro's "flow". If you find yourself writing "flow", stop. The only exceptions are
   `capture/addon.py` and `capture/filtering.py`, where `flow` names mitmproxy's own object at
   the boundary.
-- **SPEC.md has drifted from the code in ten places and must not be "fixed" to match.** It is
+- **SPEC.md has drifted from the code in eleven places and must not be "fixed" to match.** It is
   the v1 specification and a historical record of intent. `docs/USAGE.md` is the API reference.
-  The ten are enumerated once, in
+  The eleven are enumerated once, in
   [.claude/agents/doc-drift-reviewer.md](./.claude/agents/doc-drift-reviewer.md) — that is where a
   review reads them from, so a new divergence is recorded there and nowhere else.
 - **`SKILL.md` is deliberately self-contained** — no relative links into this repo — so it works
