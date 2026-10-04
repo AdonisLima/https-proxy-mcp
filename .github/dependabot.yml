@@ -1,0 +1,31 @@
+version: 2
+
+# Monthly on both ecosystems: often enough that a fixed version exists before the dependency
+# audit in ci.yml finds it needs one (Dependabot is what keeps the lock fresh enough that a fix
+# exists without a fire drill), rarely enough that PR noise stays tolerable on a repository
+# whose branches are pushed directly. CI triggers on push and Dependabot pushes branches, so
+# every update is exercised by the full gate set with no trigger change.
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    ignore:
+      # Both caps are load-bearing and are not Dependabot's to lift — see the comments on the
+      # ranges themselves in pyproject.toml. mcp 2.0.0 removed `mcp.server.fastmcp` outright,
+      # and a wheel ships no lock, so a consumer resolves from the manifest's ranges alone:
+      # lifting `mcp<2` means porting to the replacement API, not relaxing a bound. Capture is
+      # written against mitmproxy 12's addon hooks and filter expression language, which a
+      # major version is free to move. Without these rules the queue fills with major-bump PRs
+      # the project has already decided to decline.
+      - dependency-name: "mcp"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "mitmproxy"
+        update-types: ["version-update:semver-major"]
+
+  # Also what maintains the full-length SHA pins in ci.yml from here on: a new action release
+  # arrives as a PR that moves the pin and its version comment together.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"

@@ -9,6 +9,7 @@ project's single seam for that question, in the manner of the USAGE.md signature
 workflow they run from and asserting the promise each makes.
 """
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -16,6 +17,7 @@ import yaml
 
 MANIFEST = Path(__file__).resolve().parent.parent / "pyproject.toml"
 WORKFLOW = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.yml"
+DEPENDABOT = Path(__file__).resolve().parent.parent / ".github" / "dependabot.yml"
 
 
 def manifest() -> dict:
@@ -57,6 +59,20 @@ def audit_step() -> dict:
     ]
     assert len(steps) == 1
     return steps[0]
+
+
+def action_references() -> list:
+    """Every ``uses:`` step in the workflow, as parsed data."""
+    return [
+        step["uses"] for job in workflow_jobs().values() for step in job["steps"] if "uses" in step
+    ]
+
+
+def dependabot_updates() -> list:
+    """The Dependabot config, read as data — a new file, but the same argument as the workflow:
+    parsing rather than text-matching means a reformat that keeps the promise does not fail."""
+    with DEPENDABOT.open() as handle:
+        return yaml.safe_load(handle)["updates"]
 
 
 def test_mypy_flags_unreachable_code():
@@ -109,6 +125,47 @@ def test_dependency_audit_runs_on_linux_not_on_the_ten_x_macos_job():
 
     assert "ubuntu" in job["runs-on"], f"audit lives on {job_name} ({job['runs-on']})"
     assert "macos" not in job["runs-on"]
+
+
+def test_every_action_reference_is_a_full_length_sha_naming_its_version():
+    """Tags are mutable and a commit SHA is not; GitHub's own hardening guide pins third-party
+    actions to a full-length SHA, and this repo already applies the spirit where it matters
+    most — the harness job pins ``harness-score`` exactly. The trailing comment naming the
+    version tag is what keeps a wall of hex readable, and is what Dependabot's github-actions
+    ecosystem rewrites when it moves the pin. The parse strips comments, so the comment half is
+    asserted against the raw lines — but keyed by count to the parsed references, so an action
+    added without a pin or a comment fails here rather than drifting."""
+    references = action_references()
+    assert references
+
+    for reference in references:
+        assert re.fullmatch(r"[^/\s]+/[^@\s]+@[0-9a-f]{40}", reference)
+
+    uses_lines = [line for line in WORKFLOW.read_text().splitlines() if re.search(r"\buses:", line)]
+    assert len(uses_lines) == len(references)
+    for line in uses_lines:
+        assert re.search(r"@[0-9a-f]{40}\s+#\s*v\d", line)
+
+
+def test_dependabot_watches_both_ecosystems_and_declines_the_capped_majors():
+    """The audit step asks whether the locked resolution is vulnerable; Dependabot is what keeps
+    the lock fresh enough that a fix exists without a fire drill. Monthly on both ecosystems —
+    ``uv`` for the lock, ``github-actions`` for the SHA pins above. The ignores are the other
+    half of the bargain: the ``mcp<2`` and ``mitmproxy<13`` caps are load-bearing (a wheel ships
+    no lock, so a consumer resolves from the manifest's ranges alone, and lifting either means
+    porting, per the manifest's own comments), so major-bump PRs for those two are PRs the
+    project has already decided to decline. Declining them in config keeps the queue honest;
+    the caps themselves stay byte-for-byte untouched."""
+    by_ecosystem = {update["package-ecosystem"]: update for update in dependabot_updates()}
+
+    assert {"uv", "github-actions"} <= set(by_ecosystem)
+    for update in by_ecosystem.values():
+        assert update["directory"] == "/"
+        assert update["schedule"]["interval"] == "monthly"
+
+    ignores = {rule["dependency-name"]: rule for rule in by_ecosystem["uv"].get("ignore", [])}
+    for capped in ("mcp", "mitmproxy"):
+        assert "version-update:semver-major" in ignores[capped]["update-types"]
 
 
 def test_per_test_timeout_fails_a_hang_before_the_job_timeout():
