@@ -50,6 +50,9 @@ running against the real thing, and several of these passed every test while bei
 - **A record that cannot be parsed outranks ownership.** Ownership cannot be read out of something
   that will not parse, so the existing fail-safe stands: switch both proxies off and move the file
   aside. Fidelity is already lost at that point; connectivity is not.
+- **The report of who holds the proxy lives beside the model**, in `ProxyReport`/`report()` —
+  ownership semantics, ownership resolution and the prose about both are one fact, and the
+  absent-vs-null wire shape is pinned through `tests/test_tools_trust.py`.
 
 ## CoreSimulator and trust
 

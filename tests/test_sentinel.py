@@ -24,6 +24,7 @@ from https_proxy_mcp.targets.systemproxy import (
     ProxySetting,
     SystemProxy,
     SystemProxyState,
+    release_instruction,
     repair_system_proxy,
     resolve_primary_service,
 )
@@ -557,3 +558,144 @@ def test_a_corrupt_record_naming_a_live_owner_still_unproxies_the_machine(sentin
     assert ["-setsecurewebproxystate", "Wi-Fi", "off"] in commands.mutations
     assert not sentinel.exists()
     assert sentinel.with_suffix(".corrupt").exists()
+
+
+# --- the report of who holds it -------------------------------------------------
+#
+# `report()` composes, from one sentinel read and one ownership resolution, what `get_status`
+# and `diagnose_capture` both need: the sentence and the holder it names. Pinned here directly
+# as well as through the tool surface in `test_tools_trust.py`, because composing the report
+# beside the sentinel made this unit seam the natural home for the four ownership states and
+# the absent-vs-null discipline.
+
+
+def test_a_report_for_a_machine_that_is_not_redirected(sentinel):
+    """Absent, not null: with no redirect there is no service, sentinel or owner to be null
+    *about*, so the report carries exactly two keys."""
+    report = SystemProxy(sentinel, runner=FakeCommands()).report(recording=False)
+
+    assert report.redirected is False
+    assert report.holder is None
+    assert report.to_dict() == {
+        "redirected": False,
+        "detail": "the system proxy is not redirected",
+    }
+
+
+def test_a_report_on_a_record_this_process_owns(sentinel):
+    """``ours`` is the field an agent acts on: stop_capture puts back a redirect this process
+    made, and nothing else."""
+    commands = FakeCommands()
+    proxy = SystemProxy(sentinel, runner=commands)
+    proxy.redirect("127.0.0.1", 8080)
+
+    report = proxy.report(recording=True)
+
+    assert report.ours is True
+    assert report.owner is not None and report.owner.pid == os.getpid()
+    # The holder is set only for a live foreign owner — the three safe states never carry one.
+    assert report.holder is None
+    assert "on stop_capture" in report.detail
+    assert report.to_dict()["owner"] == {"pid": os.getpid(), "ours": True}
+
+
+def test_a_report_on_a_record_a_dead_process_left_behind(sentinel):
+    """A crash leftover: reported as not ours, so an agent does not read it as a Session it can
+    stop, and no holder — there is no live process to name."""
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": 4242, "started": PROCESS_START.strip()})
+
+    report = SystemProxy(sentinel, runner=unreadable_start_time(commands)).report(recording=False)
+
+    assert report.ours is False
+    assert report.holder is None
+    assert "no longer running" in report.detail
+    assert report.to_dict()["owner"] == {"pid": 4242, "ours": False}
+
+
+def test_a_report_on_a_record_that_names_no_owner(sentinel):
+    """The absent state: nobody is reported rather than somebody invented, which is the same
+    fail-safe direction the repair path takes."""
+    write_sentinel(sentinel, None)
+
+    report = SystemProxy(sentinel, runner=FakeCommands()).report(recording=False)
+
+    assert report.owner is None
+    assert report.ours is False
+    assert report.holder is None
+    assert "does not name the process" in report.detail
+    assert report.to_dict()["owner"] is None
+
+
+def test_a_report_on_a_live_foreign_record_carries_the_holder(sentinel):
+    """The one state with a holder: ``diagnose_capture`` needs the process, not just the prose
+    that quotes it."""
+    commands = FakeCommands()
+    holder = os.getpid() + 1
+    write_sentinel(sentinel, {"pid": holder, "started": PROCESS_START.strip()})
+
+    report = SystemProxy(sentinel, runner=commands).report(recording=False)
+
+    assert report.holder == ProxyOwner(pid=holder, started=PROCESS_START.strip())
+    assert report.ours is False
+    assert report.to_dict()["owner"] == {"pid": holder, "ours": False}
+    # The holder is never serialised: `owner` already carries what a client acts on, and one
+    # pid in two wire shapes invites reading the wrong one.
+    assert "holder" not in report.to_dict()
+
+
+def test_the_live_foreign_sentence_branches_on_whether_a_session_is_recording(sentinel):
+    """The only server-side fact the prose needs, crossing the seam as a bool.
+
+    "This Session does not own it" names something that does not exist when nothing is
+    recording here — which is the state ``diagnose_capture`` borrows the sentence in.
+    """
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": os.getpid() + 1, "started": PROCESS_START.strip()})
+    proxy = SystemProxy(sentinel, runner=commands)
+
+    recording = proxy.report(recording=True)
+    idle = proxy.report(recording=False)
+
+    assert "This Session does not own it, so stopping here leaves it in place" in recording.detail
+    assert "Nothing here owns it, so there is nothing to stop here" in idle.detail
+
+
+def test_a_report_resolves_ownership_exactly_once(sentinel):
+    """One sentinel read and one ``ps`` invocation per report, so the sentence and the holder
+    always come from the same read and the verdict cannot contradict its own detail."""
+    commands = FakeCommands()
+    write_sentinel(sentinel, {"pid": os.getpid() + 1, "started": PROCESS_START.strip()})
+
+    SystemProxy(sentinel, runner=commands).report(recording=False)
+
+    reads = [argv for argv in commands.issued if argv[0].endswith("ps")]
+    assert len(reads) == 1
+
+
+def test_a_report_on_a_record_it_cannot_read_nulls_what_is_unknown(sentinel):
+    """Every key the readable branch carries, so a caller reads one shape either way.
+
+    The defect was absent keys: a KeyError raised in exactly the branch that says something is
+    wrong. What cannot be known is null; the path is reported, because it is what a human needs
+    to go and look at the file.
+    """
+    sentinel.write_text("{ this is not json")
+
+    report = SystemProxy(sentinel, runner=FakeCommands()).report(recording=False)
+    reported = report.to_dict()
+
+    assert reported["redirected"] is True
+    assert reported["service"] is None
+    assert reported["owner"] is None
+    assert reported["sentinel"] == str(sentinel)
+    assert "could not be read" in reported["detail"]
+
+
+def test_the_release_instruction_is_one_sentence_with_the_pid_in_it():
+    """The actionable kernel of the ownership model, composed once for every call site — the
+    multi-wording drift this prevents already had to be fixed once."""
+    assert (
+        release_instruction(4242)
+        == "`kill 4242` makes that process restore the machine on its way out"
+    )

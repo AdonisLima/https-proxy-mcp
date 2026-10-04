@@ -45,6 +45,7 @@ from https_proxy_mcp.targets.simctl import Simctl, SimulatorDevice, ensure_autho
 from https_proxy_mcp.targets.systemproxy import (
     CommandRunner,
     SystemProxy,
+    release_instruction,
     run_command,
     sentinel_path,
 )
@@ -234,12 +235,11 @@ class IosSimulatorTarget:
                     " to that process's capture port rather than to this one"
                 ),
                 remediation=(
-                    f"`kill {holder.pid}` makes that process restore the machine on its way out,"
-                    " after which this refusal no longer applies — start_capture here still needs"
-                    " a booted device and a trusted authority, and will say so if either is"
-                    " missing. Nothing is changed from here: restoring a redirect this process does"
-                    " not own is what left the other Session reporting that it was recording while"
-                    " receiving nothing"
+                    f"{release_instruction(holder.pid)}, after which this refusal no longer"
+                    " applies — start_capture here still needs a booted device and a trusted"
+                    " authority, and will say so if either is missing. Nothing is changed from"
+                    " here: restoring a redirect this process does not own is what left the"
+                    " other Session reporting that it was recording while receiving nothing"
                 ),
             )
 

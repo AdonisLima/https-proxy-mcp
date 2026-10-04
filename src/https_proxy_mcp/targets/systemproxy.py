@@ -277,6 +277,125 @@ class ProxyHeldElsewhereError(RuntimeError):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ProxyReport:
+    """Who holds the machine's proxy, and the one sentence that says so.
+
+    The report a server turns into ``get_status``'s ``proxy`` field and ``diagnose_capture``'s
+    held verdict. Composed here, beside the sentinel it describes, because the ownership
+    semantics, the ownership resolution and the prose about both are one fact — the server
+    layer that used to assemble it had to import this module's internals to say anything.
+
+    ``holder`` is the live foreign process holding the record, when there is one: the half of
+    the answer ``diagnose_capture`` needs that the prose only quotes. It is deliberately never
+    serialised — ``owner`` already carries what a client acts on, and a wire field repeating
+    one pid in a second shape invites reading the wrong one.
+
+    ``ours`` is the field an agent acts on: stop_capture puts back a redirect this process
+    made, and nothing else.
+    """
+
+    redirected: bool
+    detail: str
+    service: str | None
+    sentinel: str | None
+    owner: ProxyOwner | None
+    ours: bool
+    holder: ProxyOwner | None
+
+    def to_dict(self) -> dict[str, object]:
+        """The report as tool output, with absent-versus-null as the wire format.
+
+        Three shapes, and which one a branch emits is part of the contract. A machine that is
+        not redirected reports only ``redirected`` and ``detail`` — there is no service,
+        sentinel or owner to be null *about*. A record that will not parse carries every key
+        the readable branch carries, with ``service`` and ``owner`` nulled: those two are
+        genuinely unknown — the record is the only thing that knew either, and it will not
+        parse — while the path is known, and is what a human needs to go and look at the file.
+        Reporting some keys and omitting others was the whole defect: a KeyError raised in
+        exactly the branch that says "something is wrong here" is how an agent ends up
+        concluding the machine is not proxied.
+        """
+        if not self.redirected:
+            return {"redirected": False, "detail": self.detail}
+        return {
+            "redirected": True,
+            "service": self.service,
+            "sentinel": self.sentinel,
+            "owner": None if self.owner is None else {"pid": self.owner.pid, "ours": self.ours},
+            "detail": self.detail,
+        }
+
+
+def release_instruction(pid: int) -> str:
+    """The one sentence that says how a redirect held by another process is released.
+
+    Every branch that reports a live foreign holder ends in this instruction — the diagnose
+    remediation, the iOS target's held verdict, and proxy repair — and it is the actionable
+    kernel of the whole ownership model, so it is composed exactly once. The drift this
+    prevents already happened: the sentence existed in more than one wording and one instance
+    had to be corrected. Call-site suffixes — what a retried call still needs, why nothing is
+    released from here — stay at the call sites. The refusal exception's message keeps its own
+    wording: there ``kill`` names the signal rather than standing alone as the instruction, a
+    different grammatical context.
+    """
+    return f"`kill {pid}` makes that process restore the machine on its way out"
+
+
+def _proxy_detail(
+    prior: SystemProxyState,
+    owner: ProxyOwner | None,
+    ownership: Ownership,
+    *,
+    recording: bool,
+) -> str:
+    """One sentence about a redirect, branched on who owns it.
+
+    The promise that state will be restored on ``stop_capture`` is only made about a record this
+    process owns. For a record another live process holds it is simply false — stopping here
+    restores nothing, because restoring someone else's redirect is the defect this work removes —
+    and prose that is confidently wrong is what sent the developer looking in the wrong place.
+
+    ``recording`` exists for the same reason one layer along. "This Session does not own it" is
+    true and useful while a Session is open here, and names something that does not exist when
+    there is none — which is the state ``diagnose_capture`` borrows this sentence in, since its
+    ``proxy_held_elsewhere`` branch is reached only when nothing is recording. CONTEXT.md's Session
+    is a precise word and this branch is the one place the tool was using it loosely.
+    """
+    routed = f"{prior.service} is routed through the capture port"
+    restored_at_the_next_start = f"The next server start restores server={prior.server_summary}"
+
+    # Checked before the ownership states so the rest can name a pid: a record with no owner is
+    # the only one that resolves to `absent`, and it has no process to name.
+    if owner is None:
+        return (
+            f"{routed}, and the record does not name the process that did it, so nobody owns it."
+            f" {restored_at_the_next_start}"
+        )
+
+    if ownership == "ours":
+        return (
+            f"{routed} by this process (pid {owner.pid});"
+            f" it will be restored to server={prior.server_summary} on stop_capture"
+        )
+
+    if ownership == "live_foreign":
+        held = (
+            "This Session does not own it, so stopping here leaves it in place"
+            if recording
+            else "Nothing here owns it, so there is nothing to stop here"
+        )
+        return (
+            f"{routed} by another https-proxy-mcp process (pid {owner.pid}) that is still running."
+            f" {held}; `kill {owner.pid}` makes that process put the machine back on its way out"
+        )
+
+    return (
+        f"{routed} by a process that is no longer running (pid {owner.pid}), so it was left behind"
+        f" rather than released. {restored_at_the_next_start}"
+    )
+
+
 def run_command(argv: list[str], *, stdin: str | None = None) -> str:
     """Run a system command and return its stdout, failing with something readable.
 
@@ -529,6 +648,58 @@ class SystemProxy:
         if holder is not None:
             raise ProxyHeldElsewhereError(holder)
 
+    # --- the report of who holds it ----------------------------------------------
+
+    def report(self, *, recording: bool) -> ProxyReport:
+        """Whether the machine's proxy is redirected, to what, and by whom — from one read.
+
+        Two callers want two halves of one answer: ``get_status`` wants the report, and
+        ``diagnose_capture`` wants the holder *and* the report's sentence about it. Asking
+        twice resolved ownership twice, and a holder that exited between the two reads produced
+        a ``proxy_held_elsewhere`` verdict whose detail came from the dead-owner branch.
+        Vanishingly unlikely, harmless either way, and an answer contradicting itself is
+        precisely the failure this work exists to stop — so the sentinel is read once and
+        ownership resolved once (one ``ps`` invocation), and the sentence and the holder always
+        come from the same read.
+
+        ``recording`` is the only server-side fact the prose needs, and crosses as a bool:
+        which of the two live-foreign sentences to say (see :func:`_proxy_detail`).
+        """
+        if not self._sentinel.exists():
+            return ProxyReport(
+                redirected=False,
+                detail="the system proxy is not redirected",
+                service=None,
+                sentinel=None,
+                owner=None,
+                ours=False,
+                holder=None,
+            )
+
+        record = self.read_record()
+        if record is None:
+            return ProxyReport(
+                redirected=True,
+                detail=f"redirected, but the sentinel at {self._sentinel} could not be read;"
+                " the next server start will switch the proxy off to restore connectivity",
+                service=None,
+                sentinel=str(self._sentinel),
+                owner=None,
+                ours=False,
+                holder=None,
+            )
+
+        ownership = resolve_ownership(record.owner, runner=self._runner)
+        return ProxyReport(
+            redirected=True,
+            detail=_proxy_detail(record.prior, record.owner, ownership, recording=recording),
+            service=record.prior.service,
+            sentinel=str(self._sentinel),
+            owner=record.owner,
+            ours=ownership == "ours",
+            holder=record.owner if ownership == "live_foreign" else None,
+        )
+
     # --- restoring ------------------------------------------------------------
 
     def restore(self) -> SystemProxyState | None:
@@ -667,8 +838,7 @@ def repair_system_proxy(root: Path | str, *, runner: CommandRunner = run_command
     if holder is not None:
         return (
             f"the system proxy is redirected by another https-proxy-mcp process (pid {holder.pid})"
-            " that is still running, so it has been left alone;"
-            f" `kill {holder.pid}` makes that process restore the machine on its way out"
+            f" that is still running, so it has been left alone; {release_instruction(holder.pid)}"
         )
 
     restored = proxy.repair()

@@ -102,7 +102,7 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
 | `serialize/views.py` | Summaries, previews, slices, pagination, curl rendering |
 | `serialize/timeline_views.py` | Summary-first Timeline rendering, and the explanation sentence |
 | `serialize/har.py` | HAR 1.2, redacted by default |
-| `targets/systemproxy.py` | The Mac's proxy settings, and the sentinel protocol that guarantees they come back |
+| `targets/systemproxy.py` | The Mac's proxy settings, the sentinel protocol that guarantees they come back, and the report of who holds it |
 | `targets/simctl.py` | CoreSimulator: which device, install the authority, and *verify* trust |
 | `targets/ios_simulator.py` | The iOS Simulator Capture Target, including the five-way diagnosis |
 | `targets/` | `CaptureTarget` protocol, `TrustStatus`, `Diagnosis`, `CaptureObservations`, `CurlTarget` |
