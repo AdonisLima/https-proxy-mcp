@@ -466,7 +466,7 @@ same record.
     "service": "Wi-Fi",
     "sentinel": "…/proxy-state.json",
     "owner": { "pid": 89858, "ours": false },
-    "detail": "Wi-Fi is routed through the capture port by another https-proxy-mcp process (pid 89858) that is still running. Nothing here owns it, so there is nothing to stop here; `kill 89858` makes that process put the machine back on its way out"
+    "detail": "Wi-Fi is routed through the capture port by another https-proxy-mcp process (pid 89858) that is still running. Nothing here owns it, so there is nothing to stop here; `kill 89858` makes that process restore the machine on its way out"
   }
 }
 ```

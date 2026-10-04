@@ -331,7 +331,8 @@ def release_instruction(pid: int) -> str:
     """The one sentence that says how a redirect held by another process is released.
 
     Every branch that reports a live foreign holder ends in this instruction — the diagnose
-    remediation, the iOS target's held verdict, and proxy repair — and it is the actionable
+    remediation, the iOS target's held verdict, proxy repair, and the proxy report's own
+    live-foreign detail — and it is the actionable
     kernel of the whole ownership model, so it is composed exactly once. The drift this
     prevents already happened: the sentence existed in more than one wording and one instance
     had to be corrected. Call-site suffixes — what a retried call still needs, why nothing is
@@ -387,7 +388,7 @@ def _proxy_detail(
         )
         return (
             f"{routed} by another https-proxy-mcp process (pid {owner.pid}) that is still running."
-            f" {held}; `kill {owner.pid}` makes that process put the machine back on its way out"
+            f" {held}; {release_instruction(owner.pid)}"
         )
 
     return (
