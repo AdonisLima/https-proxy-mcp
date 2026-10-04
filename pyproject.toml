@@ -66,6 +66,7 @@ dev = [
     "pre-commit>=4.4.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.0.0",
     "pytest-timeout>=2.4.0",
     "ruff>=0.16.1",
 ]
@@ -102,6 +103,30 @@ markers = [
 filterwarnings = [
     "error",
     "ignore:.*deprecated.*:DeprecationWarning",
+]
+
+[tool.coverage.report]
+# Measured 97% on the full suite on main (2026-09-16, post-Human-View: 1022 passed, the 3
+# machine-gated tests skipped, 2180 statements, 57 missed) — not transcribed from the research,
+# whose 92% predates that merge. The floor sits a couple of points under the measurement and is
+# deliberately not a round number: it is insurance against regression, not a target to grow
+# toward.
+#
+# It is also a floor on the *total*, not per module, and it stays low enough that the
+# machine-mutating modules feel no pressure toward more elaborate fakes: targets/systemproxy.py
+# measures 95% and targets/simctl.py 96% with the world outside the three gated tests faked by
+# design, and the lowest module (runs/process.py, 90%) is subprocess orchestration, not a gap to
+# close with a bigger harness. If a future change drops the total, the fix is a test or a
+# lowered-and-argued floor here — never a machine fake.
+fail_under = 96
+# The standard conventions, kept short. None of these shapes exist in src/ today — they are
+# declared so that typing ceremony and abstract markers never count against the floor when they
+# do appear. coverage.py's own default (the pragma) must be restated: setting exclude_lines
+# replaces it.
+exclude_lines = [
+    "# pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
 ]
 
 [tool.mypy]

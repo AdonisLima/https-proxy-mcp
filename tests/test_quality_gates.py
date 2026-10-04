@@ -107,6 +107,37 @@ def test_per_test_timeout_fails_a_hang_before_the_job_timeout():
     assert 0 < timeout <= 120
 
 
+def test_coverage_floor_is_measured_from_the_full_suite_not_aspirational():
+    """The floor is insurance against regression, so it exists, sits a couple of points under the
+    recorded full-suite measurement rather than at an aspirational target, and is not a round
+    number. A floor raised to a round number, or past the measurement, is pressure toward faking
+    the machine-mutating modules more elaborately — the exact outcome the floor's comment warns
+    against. The standard exclusions keep typing ceremony out of what the floor measures."""
+    report = gate_configuration()["coverage"]["report"]
+
+    assert 0 < report["fail_under"] < 100
+    assert report["fail_under"] % 5 != 0
+    assert "if TYPE_CHECKING:" in report["exclude_lines"]
+
+
+def test_the_ci_test_step_carries_the_coverage_flags():
+    """The floor is only a gate if something runs with the flags: the CI test step — the full
+    suite, not the fast majority — is the one place an instrumented run belongs, since the
+    recorded "no tests in pre-commit" decision applies a fortiori to a slower instrumented run.
+    Asserted by shape here and exercised by CI on push."""
+    steps = [
+        step
+        for job in workflow_jobs().values()
+        for step in job["steps"]
+        if "run" in step and "uv run pytest" in step["run"]
+    ]
+    assert len(steps) == 1
+    run = steps[0]["run"]
+
+    assert "--cov=https_proxy_mcp" in run
+    assert "--cov-report=" in run
+
+
 def test_ruff_guards_the_single_event_loop_with_the_async_family():
     """ADR-0001 runs the proxy on the server's single event loop, so a blocking call inside an
     async function stalls capture for every Exchange — the specific bug class ruff's ASYNC

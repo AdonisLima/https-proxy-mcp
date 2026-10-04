@@ -22,3 +22,6 @@ wheels/
 # Per-developer overrides of .claude/settings.json. The committed settings.json carries the
 # hooks everyone should have; this is where someone disables one for themselves.
 .claude/settings.local.json
+
+# Coverage data: written by any local `pytest --cov` run, read only to print the report.
+.coverage

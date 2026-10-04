@@ -54,8 +54,13 @@ jobs:
       # and installed, which is the part no other check can substitute for. The three machine
       # tests stay skipped: they are gated on HTTPS_PROXY_MCP_E2E, which is deliberately not set
       # here and must never be — they redirect the runner's system proxy.
+      #
+      # Coverage is enforced here and nowhere else: the floor lives in pyproject.toml's
+      # [tool.coverage] and the flags ride on this step. Pre-commit gains nothing — the recorded
+      # "no tests in the hook" decision applies a fortiori to an instrumented run, which is
+      # slower still and would invite the bypass that decision exists to prevent.
       - name: Tests
-        run: uv run pytest -q
+        run: uv run pytest -q --cov=https_proxy_mcp --cov-report=term-missing
 
       - name: Lint
         run: uv run ruff check .
