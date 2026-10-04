@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from https_proxy_mcp.correlate.steps import Step
-from https_proxy_mcp.eventsources import EventSource
+from https_proxy_mcp.eventsources import ARTIFACT_SOURCES, EventSource
 from https_proxy_mcp.eventsources.explicit import StepLog, StepStateError
 from https_proxy_mcp.eventsources.maestro import MaestroEventSource
 from https_proxy_mcp.runs.registry import RunRegistry
@@ -294,10 +294,11 @@ def test_marks_are_ordered_by_start(run):
 # --- the shared contract ------------------------------------------------------
 
 
-@pytest.mark.parametrize("source", [MaestroEventSource(), StepLog()], ids=["maestro", "explicit"])
+@pytest.mark.parametrize("source", [*ARTIFACT_SOURCES, StepLog()], ids=lambda source: source.name)
 def test_every_event_source_satisfies_the_protocol(source, run):
     """PLAN.md asks for one shared suite every Event Source must pass. This is what keeps the
-    core honest as sources multiply, and what makes Detox later an addition rather than a change.
+    core honest as sources multiply, and what makes Detox later an addition rather than a change:
+    a source added to ``ARTIFACT_SOURCES`` is covered here with no further edit.
     """
     assert isinstance(source, EventSource)
     assert source.name

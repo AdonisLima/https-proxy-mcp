@@ -16,7 +16,9 @@ import time
 import pytest
 
 from https_proxy_mcp.capture.exchange import CapturedExchange, PendingExchange
-from https_proxy_mcp.server import build_server
+from https_proxy_mcp.correlate.steps import Step
+from https_proxy_mcp.eventsources import ARTIFACT_SOURCES
+from https_proxy_mcp.server import build_server, run_tools
 from https_proxy_mcp.server.state import CaptureState
 from stub_runtime import StubRuntime
 from tool_calls import call
@@ -252,6 +254,30 @@ async def test_a_timeline_can_be_had_with_no_run_at_all(recording, state):
 
     assert timeline["run"]["id"] == "session"
     assert [item["label"] for item in timeline["steps"]] == ["did a thing by hand"]
+
+
+async def test_a_source_added_to_the_registry_is_consulted(recording, monkeypatch):
+    """The wiring pin for `ARTIFACT_SOURCES`: a new artifact parser is an addition in one place,
+    and every Timeline then consults it with no further edit."""
+
+    class MarkerSource:
+        name = "marker"
+
+        def steps(self, run):
+            return [
+                Step(
+                    t_start=time.time(),
+                    duration_ms=1.0,
+                    label="a step from the registry",
+                    status="passed",
+                )
+            ]
+
+    monkeypatch.setattr(run_tools, "ARTIFACT_SOURCES", (*ARTIFACT_SOURCES, MarkerSource()))
+
+    timeline = await call(recording, "get_timeline")
+
+    assert "a step from the registry" in [item["label"] for item in timeline["steps"]]
 
 
 async def test_an_unknown_run_id_names_the_runs_that_do_exist(recording):

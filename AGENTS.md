@@ -97,7 +97,7 @@ the non-negotiables below. Read `.claude/skills/live-machine-tests/` before runn
 | `correlate/timeline.py` | `Occurrence`, owner-plus-overlap arithmetic, `Timeline`. **Pure: no I/O** |
 | `runs/registry.py` | `Run`, `RunRegistry` — identity, directory, manifest |
 | `runs/process.py` | Spawning the test command, Maestro flag injection, timeouts, output capture |
-| `eventsources/` | `EventSource` protocol, `StepLog` (explicit marks), `MaestroEventSource` |
+| `eventsources/` | `EventSource` protocol, `StepLog` (explicit marks), `MaestroEventSource`, and the `ARTIFACT_SOURCES` registry a new source is added to |
 | `serialize/redact.py` | Headers, JSON keys, form keys and JWTs → `<redacted:sha256:xxxxxxxx>` |
 | `serialize/views.py` | Summaries, previews, slices, pagination, curl rendering |
 | `serialize/timeline_views.py` | Summary-first Timeline rendering, and the explanation sentence |

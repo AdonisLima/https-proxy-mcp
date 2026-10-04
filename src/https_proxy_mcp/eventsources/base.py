@@ -8,6 +8,9 @@ and Maestro's parser is the enrichment path rather than the foundation (SPEC.md)
 The contract is deliberately one method. Everything a source needs is on the :class:`Run`: its
 artifacts directory and its window. Adding a parameter here would be adding it to every future
 source, so the Run carries the context instead.
+
+Artifact-parsing sources are consulted through the ``ARTIFACT_SOURCES`` registry in this package;
+the explicit source joins per Session instead, because it holds state.
 """
 
 from __future__ import annotations

@@ -28,8 +28,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 from https_proxy_mcp.capture.exchange import Exchange, PendingExchange
 from https_proxy_mcp.correlate.steps import Step, StepStatus
 from https_proxy_mcp.correlate.timeline import build_timeline
+from https_proxy_mcp.eventsources import ARTIFACT_SOURCES
 from https_proxy_mcp.eventsources.explicit import StepStateError
-from https_proxy_mcp.eventsources.maestro import MaestroEventSource
 from https_proxy_mcp.runs.process import execute, maestro_flags, parse_command
 from https_proxy_mcp.runs.registry import Run
 from https_proxy_mcp.serialize.har import write_har
@@ -263,12 +263,14 @@ def register_run_tools(server: FastMCP, state: CaptureState) -> None:
 
 
 def _steps_for(state: CaptureState, run: Run) -> list[Step]:
-    """Every Step of this Run, from both Event Sources.
+    """Every Step of this Run, from every Event Source.
 
-    Both are always consulted and each returns nothing when it has nothing to say, so no caller
-    has to decide which applies — a Maestro Run that also marked Steps by hand gets both.
+    All are always consulted and each returns nothing when it has nothing to say, so no caller
+    has to decide which applies — a Maestro Run that also marked Steps by hand gets both. The
+    Session's own ``StepLog`` joins the registry here rather than living in it: it holds
+    Session-scoped state, which a module-level registry must not.
     """
-    return [*MaestroEventSource().steps(run), *state.steps.steps(run)]
+    return [step for source in (*ARTIFACT_SOURCES, state.steps) for step in source.steps(run)]
 
 
 def _traffic(
